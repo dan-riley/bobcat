@@ -9,14 +9,16 @@ from geometry_msgs.msg import PoseStamped
 from visualization_msgs.msg import MarkerArray
 
 
-class Neighbor:
+class Neighbor(object):
     """ Data structure to hold pertinent information about other agents """
 
     def __init__(self, agent_id):
         self.id = agent_id
+        self.cid = String
         self.odometry = Odometry
         self.goal = PoseStamped
         self.map = MarkerArray
+        self.lastMessage = None
         """ Other properties that need to eventually be added for full functionality:
         self.cid = id of the agent actually in direct comm with this neighbor, if it's indirect
         self.type = robot, beacon, etc.
@@ -40,6 +42,14 @@ class Neighbor:
     #     self.path = path
 
 
+class Agent(Neighbor):
+    """ Sub-class for an individual agent, with an array of neighbors to pass data """
+
+    def __init__(self, agent_id):
+        super(Agent, self).__init__(agent_id)
+        self.neighbors = {}
+
+
 class DataListener:
     """ Listens to all of the applicable topics and repackages into a single object """
 
@@ -61,11 +71,10 @@ class MultiAgent:
         self.neighbors = {}
         self.send_pub = {}
         self.recv_sub = {}
-        self.subData = {}
 
         rospy.init_node(agent + '_multi_agent')
 
-        self.pubData = Neighbor(agent)
+        self.pubData = Agent(agent)
         # Setup the internal listeners for all data to be sent
         DataListener(self.pubData)
 
@@ -85,19 +94,36 @@ class MultiAgent:
             recv_topic = '/' + agent + '_control/' + neighbor + "/recv"
             print('Subscribing to [{}], publishing to [{}]'.format(recv_topic, send_topic))
             self.send_pub[neighbor] = rospy.Publisher('%s' % send_topic, String, queue_size=100)
-            self.recv_sub[neighbor] = rospy.Subscriber('%s' % recv_topic, String, self.CommReceiver, neighbor)
+            self.recv_sub[neighbor] = rospy.Subscriber('%s' % recv_topic, String, self.CommReceiver)
 
-    def CommReceiver(self, data, neighbor):
-        # Load the current data from the individual neighbor into the neighbors array
-        # We may need to assign each variable individually if we're missing pieces of data
-        self.neighbors[neighbor] = pickle.loads(data.data)
-        print(self.neighbors[neighbor].id, self.neighbors[neighbor].odometry)
+    def CommReceiver(self, data):
+        # Load the current data from the individual neighbor
+        neighbor = pickle.loads(data.data)
+
+        # Set each parameter.  If we loaded the data directly, we would need to delete neighbors
+        self.neighbors[neighbor.id].cid = self.id
+        self.neighbors[neighbor.id].lastMessage = rospy.get_rostime()
+        self.neighbors[neighbor.id].odometry = neighbor.odometry
+
+        print(self.neighbors[neighbor.id].id, self.neighbors[neighbor.id].cid, self.neighbors[neighbor.id].lastMessage)
+        # print(self.neighbors[neighbor.id].odometry)
+
+        # Get our neighbor's neighbors data and update our own neighbor list
+        # for neighbor2 in self.neighbors[neighbor].neighbors:
+        #     if neighbor2 != self.id:
+        #         self.neighbors[neighbor2] = self.neighbors[neighbor].neighbors[neighbor2]
+        #         print(self.neighbors[neighbor2].id, self.neighbors[neighbor2].cid, self.neighbors[neighbor2].lastMessage)
 
     def start(self):
         rate = rospy.Rate(1)
         while not rospy.is_shutdown():
             # Publish our data to each of the other agents
+            self.pubData.neighbors = self.neighbors
             picklePubData = pickle.dumps(self.pubData)
+
+            print(sys.getsizeof(picklePubData))
+            # print(picklePubData)
+
             for neighbor in self.neighbors.values():
                 self.send_pub[neighbor.id].publish(picklePubData)
 
