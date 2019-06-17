@@ -18,7 +18,7 @@ class Neighbor(object):
         self.odometry = Odometry
         self.goal = PoseStamped
         self.map = MarkerArray
-        self.lastMessage = None
+        self.lastMessage = rospy.get_rostime()
         """ Other properties that need to eventually be added for full functionality:
         self.cid = id of the agent actually in direct comm with this neighbor, if it's indirect
         self.type = robot, beacon, etc.
@@ -29,6 +29,19 @@ class Neighbor(object):
         self.replan = boolean flag for whether to force this agent to replan on it's next cycle
         self.incomm = boolean flag whether the agent is currently in comm, useful only at anchor
         """
+
+    def update(self, neighbor, updater=False):
+        self.odometry = neighbor.odometry
+        self.goal = neighbor.goal
+        self.map = neighbor.map
+
+        # Update parameters depending on if we're talking directly or not
+        if updater:
+            self.cid = updater
+            self.lastMessage = rospy.get_rostime()
+        else:
+            self.cid = neighbor.cid
+            self.lastMessage = neighbor.lastMessage
 
     # def update(self, pos, goal, goalType, cost):
     #     self.pos = pos
@@ -71,6 +84,7 @@ class MultiAgent:
         self.neighbors = {}
         self.send_pub = {}
         self.recv_sub = {}
+        self.monitor = {}
 
         rospy.init_node(agent + '_multi_agent')
 
@@ -96,23 +110,46 @@ class MultiAgent:
             self.send_pub[neighbor] = rospy.Publisher('%s' % send_topic, String, queue_size=100)
             self.recv_sub[neighbor] = rospy.Subscriber('%s' % recv_topic, String, self.CommReceiver)
 
+            # Setup topics at the anchor for visualization of what it can see
+            if agent == 'Anchor':
+                topic = '/Anchor/neighbors/' + neighbor + '/'
+                self.monitor[neighbor] = {}
+                self.monitor[neighbor]['odometry'] = rospy.Publisher(topic + 'odometry', Odometry, queue_size=10)
+                self.monitor[neighbor]['goal'] = rospy.Publisher(topic + 'goal', PoseStamped, queue_size=10)
+
+    def publishNeighbors(self):
+        # Topics for visualization at the anchor node
+        for neighbor in self.neighbors.values():
+            self.monitor[neighbor.id]['odometry'].publish(neighbor.odometry)
+            self.monitor[neighbor.id]['goal'].publish(neighbor.goal)
+
     def CommReceiver(self, data):
         # Load the current data from the individual neighbor
         neighbor = pickle.loads(data.data)
 
-        # Set each parameter.  If we loaded the data directly, we would need to delete neighbors
-        self.neighbors[neighbor.id].cid = self.id
-        self.neighbors[neighbor.id].lastMessage = rospy.get_rostime()
-        self.neighbors[neighbor.id].odometry = neighbor.odometry
+        # Update neighbor to the new information
+        self.neighbors[neighbor.id].update(neighbor, self.id)
 
-        print(self.neighbors[neighbor.id].id, self.neighbors[neighbor.id].cid, self.neighbors[neighbor.id].lastMessage)
+        print(neighbor.id, self.neighbors[neighbor.id].cid, self.neighbors[neighbor.id].lastMessage.secs)
         # print(self.neighbors[neighbor.id].odometry)
+        print(self.neighbors[neighbor.id].goal)
 
         # Get our neighbor's neighbors data and update our own neighbor list
-        # for neighbor2 in self.neighbors[neighbor].neighbors:
-        #     if neighbor2 != self.id:
-        #         self.neighbors[neighbor2] = self.neighbors[neighbor].neighbors[neighbor2]
-        #         print(self.neighbors[neighbor2].id, self.neighbors[neighbor2].cid, self.neighbors[neighbor2].lastMessage)
+        for neighbor2 in neighbor.neighbors.values():
+            # Make sure the neighbor isn't ourself, it's not a stale message,
+            # and we're already talked directly to the neighbor in the last N seconds
+            if (neighbor2.id != self.id and
+                    neighbor2.lastMessage > self.neighbors[neighbor2.id].lastMessage and
+                    (self.neighbors[neighbor2.id].cid != self.id or
+                     self.neighbors[neighbor2.id].lastMessage <
+                     rospy.get_rostime() - rospy.Duration(5))):
+                self.neighbors[neighbor2.id].update(neighbor2)
+                print(neighbor2.id, self.neighbors[neighbor2.id].cid, self.neighbors[neighbor2.id].lastMessage.secs)
+                print(self.neighbors[neighbor2.id].goal)
+
+        # Update the anchor's visualization topics
+        if self.id == 'Anchor':
+            self.publishNeighbors()
 
     def start(self):
         rate = rospy.Rate(1)
