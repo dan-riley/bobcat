@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import sys
+import copy
 import pickle
 import rospy
 
@@ -14,10 +15,10 @@ class Neighbor(object):
 
     def __init__(self, agent_id):
         self.id = agent_id
-        self.cid = String
-        self.odometry = Odometry
-        self.goal = PoseStamped
-        self.map = MarkerArray
+        self.cid = String()
+        self.odometry = Odometry()
+        self.goal = PoseStamped()
+        self.map = MarkerArray()
         self.lastMessage = rospy.get_rostime()
         """ Other properties that need to eventually be added for full functionality:
         self.cid = id of the agent actually in direct comm with this neighbor, if it's indirect
@@ -33,7 +34,9 @@ class Neighbor(object):
     def update(self, neighbor, updater=False):
         self.odometry = neighbor.odometry
         self.goal = neighbor.goal
-        self.map = neighbor.map
+        # Low bandwith data strips the map, so don't overwrite
+        if neighbor.map != '':
+            self.map = neighbor.map
 
         # Update parameters depending on if we're talking directly or not
         if updater:
@@ -69,7 +72,8 @@ class DataListener:
     def __init__(self, agent):
         self.agent = agent
         self.odom_sub = rospy.Subscriber(self.agent.id + '/odometry', Odometry, self.Receiver, 'odometry')
-        # self.goal_sub = rospy.Subscriber(self.agent.id + '/frontier_goal_pose', PoseStamped, self.Receiver, 'goal')
+        self.goal_sub = rospy.Subscriber(self.agent.id + '/frontier_goal_pose', PoseStamped, self.Receiver, 'goal')
+        self.map_sub = rospy.Subscriber(self.agent.id + '/occupied_cells_vis_array', MarkerArray, self.Receiver, 'map')
         # self.map_sub = rospy.Subscriber(self.agent.id + '/voxblox_node/occupied_nodes', MarkerArray, self.MapReceiver, 'map')
 
     def Receiver(self, data, parameter):
@@ -81,10 +85,16 @@ class MultiAgent:
 
     def __init__(self, agent):
         self.id = agent
+        self.sendData = []
         self.neighbors = {}
         self.send_pub = {}
         self.recv_sub = {}
         self.monitor = {}
+        self.recv_buffer = {}
+        self.send_sequence = {}
+        self.recv_sequence = {}
+        self.payload_limit = 100000
+        self.timer = 1
 
         rospy.init_node(agent + '_multi_agent')
 
@@ -116,23 +126,69 @@ class MultiAgent:
                 self.monitor[neighbor] = {}
                 self.monitor[neighbor]['odometry'] = rospy.Publisher(topic + 'odometry', Odometry, queue_size=10)
                 self.monitor[neighbor]['goal'] = rospy.Publisher(topic + 'goal', PoseStamped, queue_size=10)
+                self.monitor[neighbor]['map'] = rospy.Publisher(topic + 'map', MarkerArray, queue_size=10)
 
     def publishNeighbors(self):
         # Topics for visualization at the anchor node
         for neighbor in self.neighbors.values():
             self.monitor[neighbor.id]['odometry'].publish(neighbor.odometry)
             self.monitor[neighbor.id]['goal'].publish(neighbor.goal)
+            self.monitor[neighbor.id]['map'].publish(neighbor.map)
+
+    def sendSequence(self, nid):
+        # print("sending sequence", str(self.send_sequence[nid]), "of", len(self.sendData))
+        if self.send_sequence[nid] < len(self.sendData):
+            self.send_pub[nid].publish(self.sendData[self.send_sequence[nid]])
 
     def CommReceiver(self, data):
         # Load the current data from the individual neighbor
-        neighbor = pickle.loads(data.data)
+        readData = data.data.split('###')
+        sequence = readData[1]
+        nid = readData[2]
+        message = readData[3]
 
+        # Once we have the entire message, process the concatenated data
+        if sequence == 'message_complete':
+            if message != '':
+                self.recv_buffer[nid] = message
+            else:
+                self.send_pub[nid].publish('###Success###' + self.id + '###')
+
+            neighbor = pickle.loads(self.recv_buffer[nid])
+
+            self.updateData(neighbor)
+            self.recv_buffer[nid] = ''
+            self.recv_sequence[nid] = 0
+        elif sequence == 'Success':
+            self.send_sequence[nid] = self.send_sequence[nid] + 1
+            self.sendSequence(nid)
+        elif sequence == 'Retransmit':
+            self.send_sequence[nid] = int(message)
+            print("retransmitting", message, self.send_sequence[nid])
+            self.sendSequence(nid)
+        else:
+            if sequence == '0':
+                self.recv_buffer[nid] = message
+                self.recv_sequence[nid] = 0
+                self.send_pub[nid].publish('###Success###' + self.id + '###')
+            else:
+                nextSeq = self.recv_sequence[nid] + 1
+                if sequence == str(nextSeq):
+                    self.recv_buffer[nid] = self.recv_buffer[nid] + message
+                    self.recv_sequence[nid] = nextSeq
+                    self.send_pub[nid].publish('###Success###' + self.id + '###')
+                else:
+                    print("Missing", self.recv_sequence[nid], ", currently at", str(nextSeq))
+                    self.recv_sequence[nid] = nextSeq
+                    self.send_pub[nid].publish('###Retransmit###' + self.id + '###' + str(self.recv_sequence[nid]))
+
+    def updateData(self, neighbor):
         # Update neighbor to the new information
         self.neighbors[neighbor.id].update(neighbor, self.id)
 
-        print(neighbor.id, self.neighbors[neighbor.id].cid, self.neighbors[neighbor.id].lastMessage.secs)
+        # print(neighbor.id, self.neighbors[neighbor.id].cid, self.neighbors[neighbor.id].lastMessage.secs)
         # print(self.neighbors[neighbor.id].odometry)
-        print(self.neighbors[neighbor.id].goal)
+        # print(self.neighbors[neighbor.id].goal)
 
         # Get our neighbor's neighbors data and update our own neighbor list
         for neighbor2 in neighbor.neighbors.values():
@@ -144,8 +200,8 @@ class MultiAgent:
                      self.neighbors[neighbor2.id].lastMessage <
                      rospy.get_rostime() - rospy.Duration(5))):
                 self.neighbors[neighbor2.id].update(neighbor2)
-                print(neighbor2.id, self.neighbors[neighbor2.id].cid, self.neighbors[neighbor2.id].lastMessage.secs)
-                print(self.neighbors[neighbor2.id].goal)
+                # print(neighbor2.id, self.neighbors[neighbor2.id].cid, self.neighbors[neighbor2.id].lastMessage.secs)
+                # print(self.neighbors[neighbor2.id].goal)
 
         # Update the anchor's visualization topics
         if self.id == 'Anchor':
@@ -154,18 +210,79 @@ class MultiAgent:
     def start(self):
         rate = rospy.Rate(1)
         while not rospy.is_shutdown():
-            # Publish our data to each of the other agents
-            self.pubData.neighbors = self.neighbors
-            picklePubData = pickle.dumps(self.pubData)
+            self.pubData.neighbors = copy.deepcopy(self.neighbors)
 
-            print(sys.getsizeof(picklePubData))
-            # print(picklePubData)
+            if self.timer % 30:
+                self.runLowBandwidth()
+            else:
+                self.runHighBandwidth()
 
-            for neighbor in self.neighbors.values():
-                self.send_pub[neighbor.id].publish(picklePubData)
-
+            self.timer = self.timer + 1
             rate.sleep()
         return
+
+    def runLowBandwidth(self):
+        # Strip the map data out for low bandwidth transmission
+        self.pubData.map = ''
+        for neighbor in self.pubData.neighbors.values():
+            neighbor.map = ''
+
+        picklePubData = pickle.dumps(self.pubData)
+        # print(sys.getsizeof(picklePubData))
+        # print(picklePubData)
+
+        header = '###message_complete###' + self.id + '###'
+        picklePubData = header + picklePubData
+
+        for neighbor in self.neighbors.values():
+            self.send_pub[neighbor.id].publish(picklePubData)
+
+    def runHighBandwidth(self):
+        rate = rospy.Rate(1)
+        picklePubData = pickle.dumps(self.pubData)
+
+        payload_size = sys.getsizeof(picklePubData)
+        # print(payload_size)
+        # print(picklePubData)
+
+        sequence = 0
+        start = 0
+        stop = self.payload_limit
+        # readData = []
+
+        # TODO Add a way to send low bandwidth messages in the middle of the high bandwidth
+        while start < payload_size:
+            header = '###' + str(sequence) + '###' + self.id + '###'
+            self.sendData.append(header + picklePubData[start:stop])
+            start = stop
+            stop = start + self.payload_limit
+            sequence = sequence + 1
+
+        self.sendData.append('###message_complete###' + self.id + '###')
+
+        if self.id != 'Anchor':
+            for neighbor in self.neighbors.values():
+                timeout = 0
+                timer = 0
+                # print('SEND from', self.id, 'to', neighbor.id, len(self.sendData))
+
+                self.send_sequence[neighbor.id] = 0
+                while self.send_sequence[neighbor.id] < len(self.sendData):
+                    print('sending from', self.id, 'to', neighbor.id, self.send_sequence[neighbor.id], 'of', len(self.sendData))
+                    self.sendSequence(neighbor.id)
+
+                    # If we haven't received a response in a timely manner, cancel
+                    if timeout == self.send_sequence[neighbor.id]:
+                        timer = timer + 1
+                        if timer > 5:
+                            break
+                    else:
+                        timeout = self.send_sequence[neighbor.id]
+                        timer = 0
+
+                    rate.sleep()
+
+        self.sendData = []
 
 
 if __name__ == '__main__':
