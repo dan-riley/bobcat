@@ -2,6 +2,7 @@
 import sys
 import copy
 import pickle
+import zlib
 import rospy
 
 from std_msgs.msg import String
@@ -94,7 +95,7 @@ class MultiAgent:
         self.send_sequence = {}
         self.recv_sequence = {}
         self.payload_limit = 100000
-        self.timer = 1
+        self.timer = 0
 
         rospy.init_node(agent + '_multi_agent')
 
@@ -150,15 +151,14 @@ class MultiAgent:
         # Once we have the entire message, process the concatenated data
         if sequence == 'message_complete':
             if message != '':
-                self.recv_buffer[nid] = message
+                neighbor = pickle.loads(zlib.decompress(message))
             else:
                 self.send_pub[nid].publish('###Success###' + self.id + '###')
-
-            neighbor = pickle.loads(self.recv_buffer[nid])
+                neighbor = pickle.loads(zlib.decompress(self.recv_buffer[nid]))
+                self.recv_buffer[nid] = ''
+                self.recv_sequence[nid] = 0
 
             self.updateData(neighbor)
-            self.recv_buffer[nid] = ''
-            self.recv_sequence[nid] = 0
         elif sequence == 'Success':
             self.send_sequence[nid] = self.send_sequence[nid] + 1
             self.sendSequence(nid)
@@ -214,7 +214,7 @@ class MultiAgent:
 
             if self.timer % 30:
                 self.runLowBandwidth()
-            else:
+            elif self.id != 'Anchor':
                 self.runHighBandwidth()
 
             self.timer = self.timer + 1
@@ -223,11 +223,12 @@ class MultiAgent:
 
     def runLowBandwidth(self):
         # Strip the map data out for low bandwidth transmission
-        self.pubData.map = ''
-        for neighbor in self.pubData.neighbors.values():
+        pubData = copy.deepcopy(self.pubData)
+        pubData.map = ''
+        for neighbor in pubData.neighbors.values():
             neighbor.map = ''
 
-        picklePubData = pickle.dumps(self.pubData)
+        picklePubData = zlib.compress(pickle.dumps(pubData, 2), 9)
         # print(sys.getsizeof(picklePubData))
         # print(picklePubData)
 
@@ -239,36 +240,38 @@ class MultiAgent:
 
     def runHighBandwidth(self):
         rate = rospy.Rate(1)
-        picklePubData = pickle.dumps(self.pubData)
 
-        payload_size = sys.getsizeof(picklePubData)
-        # print(payload_size)
-        # print(picklePubData)
+        for neighbor in self.neighbors.values():
+            # For now only sending map data to beacons and anchor
+            # Therefore robots will not be able to relay map data
+            if 'X' not in neighbor.id:
+                pubData = copy.deepcopy(self.pubData)
+                picklePubData = zlib.compress(pickle.dumps(pubData, 2), 9)
 
-        sequence = 0
-        start = 0
-        stop = self.payload_limit
-        # readData = []
+                payload_size = sys.getsizeof(picklePubData)
+                # print(payload_size)
+                # print(picklePubData)
 
-        # TODO Add a way to send low bandwidth messages in the middle of the high bandwidth
-        while start < payload_size:
-            header = '###' + str(sequence) + '###' + self.id + '###'
-            self.sendData.append(header + picklePubData[start:stop])
-            start = stop
-            stop = start + self.payload_limit
-            sequence = sequence + 1
+                sequence = 0
+                start = 0
+                stop = self.payload_limit
 
-        self.sendData.append('###message_complete###' + self.id + '###')
+                while start < payload_size:
+                    header = '###' + str(sequence) + '###' + self.id + '###'
+                    self.sendData.append(header + picklePubData[start:stop])
+                    start = stop
+                    stop = start + self.payload_limit
+                    sequence = sequence + 1
 
-        if self.id != 'Anchor':
-            for neighbor in self.neighbors.values():
+                self.sendData.append('###message_complete###' + self.id + '###')
+
                 timeout = 0
                 timer = 0
                 # print('SEND from', self.id, 'to', neighbor.id, len(self.sendData))
 
                 self.send_sequence[neighbor.id] = 0
                 while self.send_sequence[neighbor.id] < len(self.sendData):
-                    print('sending from', self.id, 'to', neighbor.id, self.send_sequence[neighbor.id], 'of', len(self.sendData))
+                    print('sending from', self.id, 'to', neighbor.id, self.send_sequence[neighbor.id] + 1, 'of', len(self.sendData))
                     self.sendSequence(neighbor.id)
 
                     # If we haven't received a response in a timely manner, cancel
@@ -280,9 +283,11 @@ class MultiAgent:
                         timeout = self.send_sequence[neighbor.id]
                         timer = 0
 
+                    # Keep sending low bandwidth data while high is running
+                    self.runLowBandwidth()
                     rate.sleep()
 
-        self.sendData = []
+                self.sendData = []
 
 
 if __name__ == '__main__':
