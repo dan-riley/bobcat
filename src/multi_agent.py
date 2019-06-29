@@ -1,14 +1,18 @@
 #!/usr/bin/env python
 import sys
+import math
 import copy
 import pickle
 import zlib
 import rospy
+import tf
 
 from std_msgs.msg import String
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseStamped
 from visualization_msgs.msg import MarkerArray
+from gazebo_msgs.msg import ModelState
+from gazebo_msgs.srv import SetModelState
 
 
 class Neighbor(object):
@@ -21,6 +25,13 @@ class Neighbor(object):
         self.goal = PoseStamped()
         self.map = MarkerArray()
         self.lastMessage = rospy.get_rostime()
+        self.incomm = True
+
+        if 'B' in agent_id:
+            self.active = False
+        else:
+            self.active = True
+
         """ Other properties that need to eventually be added for full functionality:
         self.cid = id of the agent actually in direct comm with this neighbor, if it's indirect
         self.type = robot, beacon, etc.
@@ -43,9 +54,11 @@ class Neighbor(object):
         if updater:
             self.cid = updater
             self.lastMessage = rospy.get_rostime()
+            self.incomm = True
         else:
             self.cid = neighbor.cid
             self.lastMessage = neighbor.lastMessage
+            self.incomm = False
 
     # def update(self, pos, goal, goalType, cost):
     #     self.pos = pos
@@ -97,6 +110,12 @@ class MultiAgent:
         self.payload_limit = 100000
         self.timer = 0
 
+        # Setup possible beacons to deploy for this agent
+        if 'X' in agent:
+            self.beacons = []
+            self.beacons.append('B' + agent[1] + '1')
+            self.beacons.append('B' + agent[1] + '2')
+
         rospy.init_node(agent + '_multi_agent')
 
         self.pubData = Agent(agent)
@@ -122,7 +141,7 @@ class MultiAgent:
             self.recv_sub[neighbor] = rospy.Subscriber('%s' % recv_topic, String, self.CommReceiver)
 
             # Setup topics at the anchor for visualization of what it can see
-            if agent == 'Anchor':
+            if agent == 'Anchor' and 'X' in neighbor:
                 topic = '/Anchor/neighbors/' + neighbor + '/'
                 self.monitor[neighbor] = {}
                 self.monitor[neighbor]['odometry'] = rospy.Publisher(topic + 'odometry', Odometry, queue_size=10)
@@ -132,9 +151,10 @@ class MultiAgent:
     def publishNeighbors(self):
         # Topics for visualization at the anchor node
         for neighbor in self.neighbors.values():
-            self.monitor[neighbor.id]['odometry'].publish(neighbor.odometry)
-            self.monitor[neighbor.id]['goal'].publish(neighbor.goal)
-            self.monitor[neighbor.id]['map'].publish(neighbor.map)
+            if 'X' in neighbor.id:
+                self.monitor[neighbor.id]['odometry'].publish(neighbor.odometry)
+                self.monitor[neighbor.id]['goal'].publish(neighbor.goal)
+                self.monitor[neighbor.id]['map'].publish(neighbor.map)
 
     def sendSequence(self, nid):
         # print("sending sequence", str(self.send_sequence[nid]), "of", len(self.sendData))
@@ -142,6 +162,10 @@ class MultiAgent:
             self.send_pub[nid].publish(self.sendData[self.send_sequence[nid]])
 
     def CommReceiver(self, data):
+        if not self.pubData.active:
+            print("Activate", self.id, "!!!")
+            self.pubData.active = True
+
         # Load the current data from the individual neighbor
         readData = data.data.split('###')
         sequence = readData[1]
@@ -207,17 +231,77 @@ class MultiAgent:
         if self.id == 'Anchor':
             self.publishNeighbors()
 
+    def spawnBeacon(self):
+        spawn = False
+        # Find the first available beacon for this agent
+        for beacon in self.beacons:
+            if not self.neighbors[beacon].active:
+                spawn = beacon
+                break
+
+        if spawn:
+            # For now we're just moving the beacon 3 units behind which will hopefull
+            # be in range of the anchor or previous beacon
+            # Either need to identify location before comm loss, or make this a guidance
+            # command to return to a point in range
+            service = '/gazebo/set_model_state'
+            rospy.wait_for_service(service)
+            set_state = rospy.ServiceProxy(service, SetModelState)
+
+            pose = self.pubData.odometry.pose.pose
+            (roll, pitch, yaw) = tf.transformations.euler_from_quaternion(
+                [pose.orientation.x, pose.orientation.y,
+                 pose.orientation.z, pose.orientation.w])
+
+            pose.position.x = pose.position.x - math.cos(yaw) * 3
+            pose.position.y = pose.position.y - math.sin(yaw) * 3
+
+            state = ModelState()
+            state.model_name = spawn
+            state.pose = pose
+
+            print("moving beacon", spawn)
+            try:
+                ret = set_state(state)
+                self.neighbors[spawn].active = True
+                print(ret.status_message)
+            except Exception, e:
+                rospy.logerr('Error calling service: modestate %s', str(e))
+        else:
+            print("no beacon to spawn")
+
     def start(self):
         rate = rospy.Rate(1)
         while not rospy.is_shutdown():
-            self.pubData.neighbors = copy.deepcopy(self.neighbors)
+            if self.pubData.active:
+                self.pubData.neighbors = copy.deepcopy(self.neighbors)
 
-            if self.timer % 30:
-                self.runLowBandwidth()
-            elif self.id != 'Anchor':
-                self.runHighBandwidth()
+                if self.timer % 30:
+                    self.runLowBandwidth()
+                elif self.id != 'Anchor':
+                    self.runHighBandwidth()
 
-            self.timer = self.timer + 1
+                # Check if we need to drop a beacon if we're a vehicle
+                if 'X' in self.id:
+                    numBeacons = 0
+                    dropBeacon = False
+                    # Find how many beacons are active and that we can talk to
+                    # These all need to be fixed to drop before we lose comm instead
+                    for neighbor in self.neighbors.values():
+                        if 'B' in neighbor.id and neighbor.active:
+                            numBeacons = numBeacons + 1
+                            if not neighbor.incomm:
+                                dropBeacon = True
+
+                    # If there are no beacons and we've lost comm we should try to drop
+                    if not self.neighbors['Anchor'].incomm and numBeacons == 0:
+                        dropBeacon = True
+
+                    if dropBeacon and numBeacons <= 1:
+                        self.spawnBeacon()
+
+                self.timer = self.timer + 1
+
             rate.sleep()
         return
 
@@ -236,7 +320,13 @@ class MultiAgent:
         picklePubData = header + picklePubData
 
         for neighbor in self.neighbors.values():
-            self.send_pub[neighbor.id].publish(picklePubData)
+            if neighbor.active:
+                self.send_pub[neighbor.id].publish(picklePubData)
+
+                # Check if we've received anything from this neighbor and update status
+                if (neighbor.cid == self.id and
+                        neighbor.lastMessage < rospy.get_rostime() - rospy.Duration(3)):
+                    neighbor.incomm = False
 
     def runHighBandwidth(self):
         rate = rospy.Rate(1)
@@ -244,7 +334,7 @@ class MultiAgent:
         for neighbor in self.neighbors.values():
             # For now only sending map data to beacons and anchor
             # Therefore robots will not be able to relay map data
-            if 'X' not in neighbor.id:
+            if neighbor.active and 'X' not in neighbor.id:
                 pubData = copy.deepcopy(self.pubData)
                 picklePubData = zlib.compress(pickle.dumps(pubData, 2), 9)
 
