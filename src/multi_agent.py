@@ -29,6 +29,8 @@ class Neighbor(object):
         self.goal = PoseStamped()
         self.map = MarkerArray()
         self.lastMessage = rospy.get_rostime()
+        self.lastCommCheckSend = rospy.get_rostime()
+        self.lastCommCheckRecv = rospy.get_rostime()
         self.incomm = True
 
         if 'B' in agent_id:
@@ -50,9 +52,6 @@ class Neighbor(object):
     def update(self, neighbor, updater=False):
         self.odometry = neighbor.odometry
         self.goal = neighbor.goal
-        # Low bandwith data strips the map, so don't overwrite
-        if neighbor.map != '':
-            self.map = neighbor.map
 
         # Update parameters depending on if we're talking directly or not
         if updater:
@@ -111,13 +110,16 @@ class MultiAgent:
         self.neighbors = {}
         self.send_pub = {}
         self.recv_sub = {}
+        self.ck_send_pub = {}
+        self.ck_recv_sub = {}
         self.monitor = {}
         self.recv_buffer = {}
         self.send_sequence = {}
         self.recv_sequence = {}
         self.payload_limit = 100000
         self.timer = 0
-        self.max_dist = 50  # distance to drop beacons automatically
+        self.maxDist = 50  # distance to drop beacons automatically
+        self.useDARPATransmit = False
 
         # Define which nodes republish information to display
         self.monitors = ['Anchor']
@@ -127,8 +129,14 @@ class MultiAgent:
             self.beacons = []
             self.beacons.append('B' + agent[1] + '1')
             self.beacons.append('B' + agent[1] + '2')
+            self.numBeacons = 2
+        else:
+            self.numBeacons = 0
 
         rospy.init_node(agent + '_multi_agent')
+        self.start_time = rospy.get_rostime()
+        while self.start_time.secs == 0:
+            self.start_time = rospy.get_rostime()
 
         self.pubData = Agent(agent)
 
@@ -152,9 +160,19 @@ class MultiAgent:
         for neighbor in neighbors:
             self.neighbors[neighbor] = Neighbor(neighbor)
 
-            send_topic = '/' + agent + '_control/' + neighbor + "/send"
-            recv_topic = '/' + agent + '_control/' + neighbor + "/recv"
+            ck_send_topic = '/' + agent + '_control/' + neighbor + "/send"
+            ck_recv_topic = '/' + agent + '_control/' + neighbor + "/recv"
+
+            if self.useDARPATransmit:
+                send_topic = ck_send_topic
+                recv_topic = ck_recv_topic
+            else:
+                send_topic = '/' + neighbor + '/neighbors/' + agent + "/recv"
+                recv_topic = '/' + agent + '/neighbors/' + neighbor + "/recv"
+
             print('Subscribing to [{}], publishing to [{}]'.format(recv_topic, send_topic))
+            self.ck_send_pub[neighbor] = rospy.Publisher('%s' % ck_send_topic, String, queue_size=100)
+            self.ck_recv_sub[neighbor] = rospy.Subscriber('%s' % ck_recv_topic, String, self.CommReceiver)
             self.send_pub[neighbor] = rospy.Publisher('%s' % send_topic, String, queue_size=100)
             self.recv_sub[neighbor] = rospy.Subscriber('%s' % recv_topic, String, self.CommReceiver)
 
@@ -233,6 +251,11 @@ class MultiAgent:
             self.send_sequence[nid] = int(message)
             print("retransmitting", message, self.send_sequence[nid])
             # self.sendSequence(nid)
+        elif sequence == 'CommCheck':
+            self.neighbors[nid].incomm = True
+            self.neighbors[nid].lastCommCheckRecv = rospy.get_rostime()
+            if message == 'ReturnToSender':
+                self.ck_send_pub[nid].publish('###' + str(rospy.get_rostime()) + '###CommCheck###' + self.id + '###GoodComms')
         else:
             if sequence == '0':
                 self.recv_buffer[nid] = message
@@ -252,7 +275,8 @@ class MultiAgent:
     def updateData(self, neighbor):
         # Update neighbor to the new information
         self.neighbors[neighbor.id].update(neighbor, self.id)
-
+        if len(str(neighbor.map)) > 100:
+            self.neighbors[neighbor.id].map = neighbor.map
         # print(neighbor.id, self.neighbors[neighbor.id].cid, self.neighbors[neighbor.id].lastMessage.secs)
         # print(self.neighbors[neighbor.id].odometry)
         # print(self.neighbors[neighbor.id].goal)
@@ -263,11 +287,13 @@ class MultiAgent:
             # and we're already talked directly to the neighbor in the last N seconds
             if neighbor2.id != self.id:
                 notStart = self.neighbors[neighbor.id].lastMessage > rospy.Time(0)
-                hasMap = neighbor2.map != ''
-                newerMessage = neighbor2.lastMessage > self.neighbors[neighbor2.id].lastMessage
+                hasMap = len(str(neighbor2.map)) > 100
+                newerMessage = neighbor2.lastMessage > self.neighbors[neighbor2.id].lastMessage + rospy.Duration(5)
                 notDirectComm = self.neighbors[neighbor2.id].cid != self.id
                 incomm = self.neighbors[neighbor2.id].incomm
-                if (notStart and (hasMap or (newerMessage and (notDirectComm or not incomm)))):
+                if hasMap:
+                    self.neighbors[neighbor2.id].map = neighbor2.map
+                if (notStart and (newerMessage and (notDirectComm or not incomm))):
                     self.neighbors[neighbor2.id].update(neighbor2)
                     # print(neighbor2.id, self.neighbors[neighbor2.id].cid, self.neighbors[neighbor2.id].lastMessage.secs)
                     # print(self.neighbors[neighbor2.id].goal)
@@ -316,8 +342,11 @@ class MultiAgent:
             print("moving beacon", spawn)
             try:
                 ret = set_state(state)
+                self.numBeacons = self.numBeacons - 1
                 self.neighbors[spawn].active = True
                 self.neighbors[spawn].incomm = True
+                self.neighbors[spawn].lastCommCheckSend = rospy.get_rostime()
+                self.neighbors[spawn].lastCommCheckRecv = rospy.get_rostime()
                 self.neighbors[spawn].odometry.pose.pose = pose
                 print(ret.status_message)
                 # Re-setup the pub data and send to the new beacon
@@ -329,8 +358,8 @@ class MultiAgent:
             print("no beacon to spawn")
 
     def beaconCheck(self):
-        # Check if we need to drop a beacon if we're a vehicle
-        if 'X' in self.id:
+        # Check if we need to drop a beacon if we have any beacons to drop
+        if self.numBeacons > 0:
             myPos = self.pubData.odometry.pose.pose.position
             numBeacons = 0
             dropBeacon = False
@@ -345,8 +374,7 @@ class MultiAgent:
                         pos = neighbor.odometry.pose.pose.position
                         dist = math.sqrt((myPos.x - pos.x)**2 + (myPos.y - pos.y)**2 + (myPos.z - pos.z)**2)
 
-                        if dist > self.max_dist:
-                            print(self.id, neighbor.id, dist, "beacon distance limit, maybe drop!")
+                        if dist > self.maxDist:
                             dropBeacon = True
 
                     else:
@@ -361,7 +389,7 @@ class MultiAgent:
                 anchorPos = self.neighbors['Anchor'].odometry.pose.pose.position
                 anchorDist = math.sqrt((myPos.x - anchorPos.x)**2 + (myPos.y - anchorPos.y)**2 + (myPos.z - anchorPos.z)**2)
 
-                if anchorDist > self.max_dist and numBeacons == 0:
+                if anchorDist > self.maxDist and numBeacons == 0:
                     print("anchor distance limit, let's drop!")
                     dropBeacon = True
 
@@ -370,8 +398,9 @@ class MultiAgent:
                 print("no anchor and no beacons, let's drop!")
                 backBeacon = [True]
             elif numBeacons > 1:
-                print('more than one beacon, cancelling drop')
                 dropBeacon = False
+            elif dropBeacon:
+                print(self.id, "beacon distance limit!")
 
             # Either drop a beacon in place or drop one behind if we lost comm
             if dropBeacon:
@@ -406,18 +435,19 @@ class MultiAgent:
         # print(sys.getsizeof(picklePubData))
         # print(picklePubData)
 
-        header = '###' + str(rospy.get_rostime()) + '###message_complete###' + self.id + '###'
+        curtime = rospy.get_rostime()
+        header = '###' + str(curtime) + '###message_complete###' + self.id + '###'
         picklePubData = header + picklePubData
 
         for neighbor in neighbors.values():
             if neighbor.active:
-                self.send_pub[neighbor.id].publish(picklePubData)
-
-                # Check if we've received anything from this neighbor and update status
-                if (neighbor.cid == self.id and
-                        neighbor.lastMessage < rospy.get_rostime() - rospy.Duration(10)):
+                self.ck_send_pub[neighbor.id].publish('###' + str(curtime) + '###CommCheck###' + self.id + '###ReturnToSender')
+                neighbor.lastCommCheckSend = curtime
+                if curtime > self.start_time + rospy.Duration(10) and neighbor.lastCommCheckSend > curtime - rospy.Duration(10) and neighbor.lastCommCheckRecv < curtime - rospy.Duration(10):
                     neighbor.incomm = False
                     print("lost comm with", neighbor.id, "from", self.id)
+                if neighbor.incomm:
+                    self.send_pub[neighbor.id].publish(picklePubData)
 
         # Check if we need to drop a beacon
         # Needs to be run often enough to not go out of range during high bandwidth transfers!
