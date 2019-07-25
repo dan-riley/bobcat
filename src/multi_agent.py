@@ -29,8 +29,7 @@ class Neighbor(object):
         self.goal = PoseStamped()
         self.map = MarkerArray()
         self.lastMessage = rospy.get_rostime()
-        self.lastCommCheckSend = rospy.get_rostime()
-        self.lastCommCheckRecv = rospy.get_rostime()
+        self.lastCommCheck = rospy.get_rostime()
         self.incomm = True
 
         if 'B' in agent_id:
@@ -110,15 +109,14 @@ class MultiAgent:
         self.neighbors = {}
         self.send_pub = {}
         self.recv_sub = {}
-        self.ck_send_pub = {}
-        self.ck_recv_sub = {}
+        self.comm_sub = {}
         self.monitor = {}
         self.recv_buffer = {}
         self.send_sequence = {}
         self.recv_sequence = {}
         self.payload_limit = 100000
         self.timer = 0
-        self.maxDist = 50  # distance to drop beacons automatically
+        self.maxDist = 40  # distance to drop beacons automatically
         self.useDARPATransmit = False
 
         # Define which nodes republish information to display
@@ -160,21 +158,19 @@ class MultiAgent:
         for neighbor in neighbors:
             self.neighbors[neighbor] = Neighbor(neighbor)
 
-            ck_send_topic = '/' + agent + '_control/' + neighbor + "/send"
-            ck_recv_topic = '/' + agent + '_control/' + neighbor + "/recv"
-
             if self.useDARPATransmit:
-                send_topic = ck_send_topic
-                recv_topic = ck_recv_topic
+                send_topic = '/' + agent + '_control/' + neighbor + "/send"
+                recv_topic = '/' + agent + '_control/' + neighbor + "/recv"
             else:
                 send_topic = '/' + neighbor + '/neighbors/' + agent + "/recv"
                 recv_topic = '/' + agent + '/neighbors/' + neighbor + "/recv"
 
+            comm_topic = '/' + agent + '/neighbors/' + neighbor + '/commcheck'
+
             print('Subscribing to [{}], publishing to [{}]'.format(recv_topic, send_topic))
-            self.ck_send_pub[neighbor] = rospy.Publisher('%s' % ck_send_topic, String, queue_size=100)
-            self.ck_recv_sub[neighbor] = rospy.Subscriber('%s' % ck_recv_topic, String, self.CommReceiver)
             self.send_pub[neighbor] = rospy.Publisher('%s' % send_topic, String, queue_size=100)
             self.recv_sub[neighbor] = rospy.Subscriber('%s' % recv_topic, String, self.CommReceiver)
+            self.comm_sub[neighbor] = rospy.Subscriber('%s' % comm_topic, Bool, self.CommChecker, neighbor)
 
             # Setup topics at the anchor for visualization of what it can see
             if agent in self.monitors and 'X' in neighbor:
@@ -216,6 +212,21 @@ class MultiAgent:
             # print('sending from', self.id, 'to', nid, self.send_sequence[nid] + 1, 'of', len(self.sendData))
             self.send_pub[nid].publish(self.sendData[self.send_sequence[nid]])
 
+    def CommChecker(self, data, nid):
+        # Set the comm flag to whatever the comm checker told us
+        self.neighbors[nid].incomm = data.data
+
+        # If we're in comm, set our last good time
+        if data.data:
+            self.neighbors[nid].lastCommCheck = rospy.get_rostime()
+        elif nid == 'Anchor':
+            # If we're not in comm with the anchor, see if we're in comm with a beacon,
+            # which means we're in comm with the anchor
+            for neighbor in self.neighbors.values():
+                if 'B' in neighbor.id and neighbor.incomm:
+                    self.neighbors['Anchor'].incomm = True
+                    break
+
     def CommReceiver(self, data):
         # Load the current data from the individual neighbor
         readData = data.data.split('###')
@@ -227,7 +238,7 @@ class MultiAgent:
         # Once we have the entire message, process the concatenated data
         if sequence == 'message_complete':
             if message != '':
-                # print(self.id, 'received single message from', nid)
+                print(self.id, 'received single message from', nid)
                 neighbor = pickle.loads(zlib.decompress(message))
             else:
                 print(self.id, 'received multipart message from', nid, rostime)
@@ -252,10 +263,7 @@ class MultiAgent:
             print("retransmitting", message, self.send_sequence[nid])
             # self.sendSequence(nid)
         elif sequence == 'CommCheck':
-            self.neighbors[nid].incomm = True
-            self.neighbors[nid].lastCommCheckRecv = rospy.get_rostime()
-            if message == 'ReturnToSender':
-                self.ck_send_pub[nid].publish('###' + str(rospy.get_rostime()) + '###CommCheck###' + self.id + '###GoodComms')
+            pass
         else:
             if sequence == '0':
                 self.recv_buffer[nid] = message
@@ -345,8 +353,7 @@ class MultiAgent:
                 self.numBeacons = self.numBeacons - 1
                 self.neighbors[spawn].active = True
                 self.neighbors[spawn].incomm = True
-                self.neighbors[spawn].lastCommCheckSend = rospy.get_rostime()
-                self.neighbors[spawn].lastCommCheckRecv = rospy.get_rostime()
+                self.neighbors[spawn].lastCommCheck = rospy.get_rostime()
                 self.neighbors[spawn].odometry.pose.pose = pose
                 print(ret.status_message)
                 # Re-setup the pub data and send to the new beacon
@@ -440,14 +447,8 @@ class MultiAgent:
         picklePubData = header + picklePubData
 
         for neighbor in neighbors.values():
-            if neighbor.active:
-                self.ck_send_pub[neighbor.id].publish('###' + str(curtime) + '###CommCheck###' + self.id + '###ReturnToSender')
-                neighbor.lastCommCheckSend = curtime
-                if curtime > self.start_time + rospy.Duration(10) and neighbor.lastCommCheckSend > curtime - rospy.Duration(10) and neighbor.lastCommCheckRecv < curtime - rospy.Duration(10):
-                    neighbor.incomm = False
-                    print("lost comm with", neighbor.id, "from", self.id)
-                if neighbor.incomm:
-                    self.send_pub[neighbor.id].publish(picklePubData)
+            if neighbor.active and neighbor.incomm:
+                self.send_pub[neighbor.id].publish(picklePubData)
 
         # Check if we need to drop a beacon
         # Needs to be run often enough to not go out of range during high bandwidth transfers!
@@ -459,7 +460,7 @@ class MultiAgent:
         for neighbor in neighbors.values():
             # For now only sending map data to beacons and anchor
             # Therefore robots will not be able to relay map data
-            if neighbor.active and 'X' not in neighbor.id:
+            if neighbor.active and neighbor.incomm and 'X' not in neighbor.id:
                 pubData = copy.deepcopy(self.pubData)
                 picklePubData = zlib.compress(pickle.dumps(pubData, 2), 9)
 
