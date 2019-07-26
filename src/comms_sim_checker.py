@@ -3,7 +3,8 @@ from __future__ import print_function
 import sys
 import rospy
 
-from std_msgs.msg import Bool
+from marble_multi_agent.msg import CommsCheck
+from marble_multi_agent.msg import CommsCheckArray
 from std_msgs.msg import String
 
 
@@ -46,12 +47,13 @@ class CommsChecker:
 
             send_topic = '/' + agent + '_control/' + neighbor + '/send'
             recv_topic = '/' + agent + '_control/' + neighbor + '/recv'
-            comm_topic = '/' + agent + '/neighbors/' + neighbor + '/commcheck'
 
-            print('Subscribing to [{}], publishing to [{}], [{}]'.format(recv_topic, send_topic, comm_topic))
+            print('Subscribing to [{}], publishing to [{}]'.format(recv_topic, send_topic))
             self.send_pub[neighbor] = rospy.Publisher('%s' % send_topic, String, queue_size=100)
             self.recv_sub[neighbor] = rospy.Subscriber('%s' % recv_topic, String, self.CommReceiver)
-            self.comm_pub[neighbor] = rospy.Publisher(comm_topic, Bool, queue_size=100)
+
+        comm_topic = '/' + agent + '/commcheck'
+        self.comm_pub = rospy.Publisher(comm_topic, CommsCheckArray, queue_size=100)
 
     def CommReceiver(self, data):
         readData = data.data.split('###')
@@ -71,6 +73,7 @@ class CommsChecker:
         while not rospy.is_shutdown():
             curtime = rospy.get_rostime()
 
+            comms = []
             for neighbor in self.neighbors.values():
                 self.send_pub[neighbor.id].publish('###' + str(curtime) + '###CommCheck###' + self.id + '###ReturnToSender')
                 neighbor.lastCommCheckSend = curtime
@@ -80,7 +83,14 @@ class CommsChecker:
                     neighbor.incomm = False
                     # print("lost comm with", neighbor.id, "from", self.id)
 
-                self.comm_pub[neighbor.id].publish(neighbor.incomm)
+                # Build the message for this neighbor and add to the array
+                check = CommsCheck()
+                check.id = neighbor.id
+                check.incomm = neighbor.incomm
+                comms.append(check)
+
+            # Publish our list
+            self.comm_pub.publish(comms)
             rate.sleep()
         return
 
