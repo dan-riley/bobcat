@@ -17,6 +17,7 @@ from visualization_msgs.msg import Marker
 from visualization_msgs.msg import MarkerArray
 from gazebo_msgs.msg import ModelState
 from gazebo_msgs.srv import SetModelState
+from marble_artifact_detection_msgs.msg import ArtifactArray
 from marble_multi_agent.msg import CommsCheckArray
 from marble_multi_agent.msg import Beacon
 from marble_multi_agent.msg import BeaconArray
@@ -32,6 +33,7 @@ class Neighbor(object):
         self.goal = PoseStamped()
         self.map = MarkerArray()
         self.commBeacons = BeaconArray()
+        self.newArtifacts = ArtifactArray()
         self.lastMessage = rospy.get_rostime()
         self.lastCommCheck = rospy.get_rostime()
         self.incomm = True
@@ -94,6 +96,18 @@ class BeaconObj(object):
         self.lastCommCheck = rospy.get_rostime()
 
 
+class ArtifactReport:
+    """
+    Internal artifact structure to track reporting.
+    Holds full artifact message so neighbors can be fused.
+    """
+
+    def __init__(self, artifact, artifact_id):
+        self.id = artifact_id
+        self.artifact = artifact
+        self.reported = False
+
+
 class DataListener:
     """ Listens to all of the applicable topics and repackages into a single object """
 
@@ -102,6 +116,7 @@ class DataListener:
         self.odom_sub = rospy.Subscriber(self.agent.id + '/odometry', Odometry, self.Receiver, 'odometry', queue_size=1)
         self.goal_sub = rospy.Subscriber(self.agent.id + '/frontier_goal_pose', PoseStamped, self.Receiver, 'goal', queue_size=1)
         self.beacon_sub = rospy.Subscriber(self.agent.id + '/beacons', BeaconArray, self.Receiver, 'commBeacons', queue_size=1)
+        self.artifact_sub = rospy.Subscriber(self.agent.id + '/artifact_array', ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
 
         if agent_type == 'base':
             self.map_sub = rospy.Subscriber(self.agent.id + '/occupied_cells_vis_array', MarkerArray, self.Receiver, 'map')
@@ -128,10 +143,11 @@ class MultiAgent:
         self.comm_sub = {}
         self.simcomms = {}
         self.commcheck = {}
+        self.artifacts = {}
         self.monitor = {}
         self.maxDist = 20  # distance to drop beacons automatically
-        self.commBeacons = BeaconArray()
         self.useSimComms = True
+        self.report = False
 
         # Define which nodes republish information to display
         self.monitors = ['Anchor']
@@ -152,6 +168,7 @@ class MultiAgent:
         # Setup the internal listeners if we're a robot
         if self.type == 'robot':
             DataListener(self.agent, 'robot')
+            self.task_pub = rospy.Publisher('/' + self.id + '/task', String, queue_size=10)
             self.stop_pub = rospy.Publisher('/' + self.id + '/stop', Bool, queue_size=10)
             self.stop = Bool()
             self.stop.data = False
@@ -364,6 +381,22 @@ class MultiAgent:
             elif all(backBeacon):
                 self.spawnBeacon(False)
 
+    def artifactCheck(self):
+        # Check the artifact list received from the artifact manager for new artifacts
+        for artifact in self.agent.newArtifacts.artifacts:
+            artifact_id = str(artifact.position.x) + str(artifact.position.y) + str(artifact.position.z)
+            if artifact_id not in self.artifacts:
+                self.artifacts[artifact_id] = ArtifactReport(artifact, artifact_id)
+                self.report = True
+                print(self.id, 'new artifact', artifact_id)
+
+        # If we didn't add anything new, check if any still need reported
+        if not self.report:
+            for artifact in self.artifacts.values():
+                if not artifact.reported:
+                    self.report = True
+                    break
+
     def start(self):
         rate = rospy.Rate(1)
         while not rospy.is_shutdown():
@@ -375,7 +408,6 @@ class MultiAgent:
                 neighbor.incomm = neighbor.simcomm
 
                 # Make sure our beacon list matches our neighbors'
-                # print(neighbor.commBeacons)
                 for beacon in neighbor.commBeacons.data:
                     if beacon.active and not self.beacons[beacon.id].active:
                         self.beacons[beacon.id].pos = beacon.pos
@@ -389,6 +421,22 @@ class MultiAgent:
 
             if self.type == 'robot':
                 self.beaconCheck()
+                self.artifactCheck()
+
+                # Change the goal to go home to report
+                if self.report:
+                    # If we're in comms, assume the current list is reported
+                    # Eventually may want to add a confirmation from base
+                    if self.neighbors['Anchor'].incomm:
+                        self.report = False
+                        self.task_pub.publish('Explore')
+                        for artifact in self.artifacts.values():
+                            artifact.reported = True
+                    else:
+                        print(self.id, 'return to report...')
+                        self.task_pub.publish('Home')
+
+                # Make sure we're not stopped after dropping a beacon
                 self.stop.data = False
                 self.stop_pub.publish(self.stop)
 
@@ -396,6 +444,7 @@ class MultiAgent:
         return
 
 
+# TODO fix for launch files, python3 and namespace
 if __name__ == '__main__':
     ma = MultiAgent(sys.argv[1], sys.argv[2])
 
