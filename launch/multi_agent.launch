@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <!-- Vehicle name for namespace and topic id -->
+  <arg name="vehicle" default="X1" />
+  <!-- Type of node.  Current options are 'robot' and 'base' -->
+  <arg name="type" default="robot" />
+  <!-- Whether to use simulated comms -->
+  <arg name="simcomms" default="false" />
+  <!-- How long without a message to consider 'lost comms' -->
+  <arg name="commThreshold" default="2" />
+  <!-- How far to drive before automatically dropping a beacon -->
+  <arg name="dropDist" default="14" />
+  <!-- How many beacons this agent is carrying.  Ignored for 'base' type. -->
+  <arg name="numBeacons" default="2" />
+  <!-- Total number of beacons across all deployed agents.  Higher is ok. -->
+  <arg name="totalBeacons" default="4" />
+  <!-- List of all potentially deployed neighbors.  Determines what topics are subscribed. -->
+  <arg name="potentialNeighbors" default="X1,X2" />
+  <!-- Approximate location of anchor node, for first beacon drop distance calc -->
+  <arg name="anchorX" default="1.0" />
+  <arg name="anchorY" default="0.0" />
+  <arg name="anchorZ" default="0.1" />
+
+  <node ns="$(arg vehicle)" pkg="marble_multi_agent" type="multi_agent.py" name="multi_agent" output="screen">
+    <!-- Parameters -->
+    <param name="vehicle" value="$(arg vehicle)" />
+    <param name="type" value="$(arg type)" />
+    <param name="simcomms" value="$(arg simcomms)" />
+    <param name="commThreshold" value="$(arg commThreshold)" />
+    <param name="dropDist" value="$(arg dropDist)" />
+    <param name="numBeacons" value="$(arg numBeacons)" />
+    <param name="totalBeacons" value="$(arg totalBeacons)" />
+    <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
+    <param name="anchorX" value="$(arg anchorX)" />
+    <param name="anchorY" value="$(arg anchorY)" />
+    <param name="anchorZ" value="$(arg anchorZ)" />
+  </node>
+</launch>

@@ -1,12 +1,7 @@
 #!/usr/bin/env python
 from __future__ import print_function
-import sys
 import math
-import copy
-import pickle
-import zlib
 import rospy
-import tf
 
 from std_msgs.msg import Bool
 from std_msgs.msg import String
@@ -119,14 +114,26 @@ class DataListener:
 
     def __init__(self, agent, agent_type):
         self.agent = agent  # Agent or Neighbor object
-        self.odom_sub = rospy.Subscriber(self.agent.id + '/odometry', Odometry, self.Receiver, 'odometry', queue_size=1)
-        self.goal_sub = rospy.Subscriber(self.agent.id + '/frontier_goal_pose', PoseStamped, self.Receiver, 'goal', queue_size=1)
-        self.beacon_sub = rospy.Subscriber(self.agent.id + '/beacons', BeaconArray, self.Receiver, 'commBeacons', queue_size=1)
-        self.artifact_sub = rospy.Subscriber(self.agent.id + '/artifact_array', ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
+        self.odom_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/odometry',
+                             Odometry, self.Receiver, 'odometry', queue_size=1)
+        self.goal_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/frontier_goal_pose',
+                             PoseStamped, self.Receiver, 'goal', queue_size=1)
+        self.beacon_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/beacons',
+                             BeaconArray, self.Receiver, 'commBeacons', queue_size=1)
+        self.artifact_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/artifact_array',
+                             ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
 
         if agent_type == 'base':
-            self.map_sub = rospy.Subscriber(self.agent.id + '/occupied_cells_vis_array', MarkerArray, self.Receiver, 'map')
-            # self.map_sub = rospy.Subscriber(self.agent.id + '/voxblox_node/occupied_nodes', MarkerArray, self.MapReceiver, 'map')
+            self.map_sub = \
+                rospy.Subscriber('/' + self.agent.id + '/occupied_cells_vis_array',
+                                 MarkerArray, self.Receiver, 'map')
+            # self.map_sub = \
+            #     rospy.Subscriber('/' + self.agent.id + '/voxblox_node/occupied_nodes',
+            #                      MarkerArray, self.MapReceiver, 'map')
 
     def Receiver(self, data, parameter):
         if self.agent.simcomm:
@@ -142,9 +149,29 @@ class DataListener:
 class MultiAgent:
     """ Initialize a multi-agent node for the agent, publishes data for others and listens """
 
-    def __init__(self, agent_id, agent_type):
-        self.id = agent_id
-        self.type = agent_type
+    def __init__(self):
+        # Load parameters from the launch file
+        self.id = rospy.get_param('multi_agent/vehicle', 'X1')
+        self.type = rospy.get_param('multi_agent/type', 'robot')
+        # Whether to use simulated comms or real comms
+        self.useSimComms = rospy.get_param('multi_agent/simcomms', False)
+        # Time without message for lost comm
+        self.commThreshold = rospy.Duration(rospy.get_param('multi_agent/commThreshold', False), 2)
+        # Distance to drop beacons automatically
+        self.maxDist = rospy.get_param('multi_agent/dropDist', 50)
+        # Number of beacons this robot is carrying
+        self.numBeacons = rospy.get_param('multi_agent/numBeacons', 2)
+        # Total number of potential beacons
+        totalBeacons = rospy.get_param('multi_agent/totalBeacons', 4)
+        # Potential robot neighbors to monitor
+        neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'X1,X2').split(',')
+
+        # Static anchor position
+        self.anchorPos = Point()
+        self.anchorPos.x = rospy.get_param('multi_agent/anchorX', 1.0)
+        self.anchorPos.y = rospy.get_param('multi_agent/anchorY', 0.0)
+        self.anchorPos.z = rospy.get_param('multi_agent/anchorZ', 0.1)
+
         self.neighbors = {}
         self.beacons = {}
         self.comm_sub = {}
@@ -152,26 +179,14 @@ class MultiAgent:
         self.commcheck = {}
         self.artifacts = {}
         self.monitor = {}
-        self.maxDist = 20  # distance to drop beacons automatically
-        self.commThreshold = rospy.Duration(2)  # time without message for lost comm
-        self.useSimComms = True
         self.report = False
 
-        # Anchor is at a static position
-        # Move to launch file
-        self.anchorPos = Point()
-        self.anchorPos.x = 1.0
-        self.anchorPos.y = 0.0
-        self.anchorPos.z = 0.1
-
         # Define which nodes republish information to display
-        # Could add this to launch file
+        # Could add this to launch file, or make any 'base' type use it
         self.monitors = ['Anchor']
 
-        # Setup possible beacons to deploy for this agent
-        if self.type == 'robot':
-            self.numBeacons = 2
-        else:
+        # Zero out the beacons if this is a base station type
+        if self.type == 'base':
             self.numBeacons = 0
 
         rospy.init_node(self.id + '_multi_agent')
@@ -185,8 +200,8 @@ class MultiAgent:
         # Setup the internal listeners if we're a robot
         if self.type == 'robot':
             DataListener(self.agent, 'robot')
-            self.task_pub = rospy.Publisher('/' + self.id + '/task', String, queue_size=10)
-            self.stop_pub = rospy.Publisher('/' + self.id + '/stop', Bool, queue_size=10)
+            self.task_pub = rospy.Publisher('task', String, queue_size=10)
+            self.stop_pub = rospy.Publisher('stop', Bool, queue_size=10)
             self.stop = Bool()
             self.stop.data = False
 
@@ -197,23 +212,21 @@ class MultiAgent:
         self.base_sub = rospy.Subscriber(base_topic, CommsCheckArray, self.BaseMonitor)
 
         if self.useSimComms:
-            comm_topic = '/' + self.id + '/commcheck'
-            self.comm_sub[self.id] = rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, self.id)
-            comm_topic = '/Anchor/commcheck'
-            self.comm_sub[self.id] = rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, 'Anchor')
+            self.comm_sub[self.id] = \
+                rospy.Subscriber('commcheck', CommsCheckArray, self.simCommChecker, self.id)
+            self.comm_sub[self.id] = \
+                rospy.Subscriber('/Anchor/commcheck', CommsCheckArray, self.simCommChecker, 'Anchor')
 
         # Setup the beacons.  For real robots the names shouldn't matter as long as consistent
         # May need to code the possible ones for each robot though so they don't deploy
         # duplicate names...but if they only deploy when connected to mesh it shouldn't matter
-        for i in range(1, 5):
+        for i in range(1, totalBeacons + 1):
             nid = 'B' + str(i)
             self.beacons[nid] = BeaconObj(nid)
             if self.useSimComms:
                 comm_topic = '/' + nid + '/commcheck'
-                self.comm_sub[nid] = rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
-
-        # Setup all of the neighbors.  This should either be hardcoded or added as a parameter
-        neighbors = ['X1', 'X2']
+                self.comm_sub[nid] = \
+                    rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
 
         # Setup the listeners for each neighbor
         for nid in [n for n in neighbors if n != self.id]:
@@ -222,21 +235,25 @@ class MultiAgent:
 
             if self.useSimComms:
                 comm_topic = '/' + nid + '/commcheck'
-                self.comm_sub[nid] = rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
+                self.comm_sub[nid] = \
+                    rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
 
             # Setup topics for visualization at whichever monitors are specified (usually base)
             if self.id in self.monitors:
-                topic = '/' + self.id + '/neighbors/' + nid + '/'
+                topic = 'neighbors/' + nid + '/'
                 self.monitor[nid] = {}
-                self.monitor[nid]['odometry'] = rospy.Publisher(topic + 'odometry', Odometry, queue_size=10)
-                self.monitor[nid]['goal'] = rospy.Publisher(topic + 'goal', PoseStamped, queue_size=10)
-                self.monitor[nid]['map'] = rospy.Publisher(topic + 'map', MarkerArray, queue_size=10)
+                self.monitor[nid]['odometry'] = \
+                    rospy.Publisher(topic + 'odometry', Odometry, queue_size=10)
+                self.monitor[nid]['goal'] = \
+                    rospy.Publisher(topic + 'goal', PoseStamped, queue_size=10)
+                self.monitor[nid]['map'] = \
+                    rospy.Publisher(topic + 'map', MarkerArray, queue_size=10)
 
-        self.beacon_pub = rospy.Publisher('/' + self.id + '/beacons', BeaconArray, queue_size=10)
+        self.beacon_pub = rospy.Publisher('beacons', BeaconArray, queue_size=10)
 
         # Setup the beacon monitor
         if self.id in self.monitors:
-            self.monitor['beacons'] = rospy.Publisher('/' + self.id + '/mbeacons', Marker, queue_size=10)
+            self.monitor['beacons'] = rospy.Publisher('mbeacons', Marker, queue_size=10)
             self.mbeacon = Marker()
             self.mbeacon.header.frame_id = 'world'
             self.mbeacon.type = self.mbeacon.CUBE_LIST
@@ -281,16 +298,10 @@ class MultiAgent:
     def CommCheck(self):
         # Simply check when the last time we saw a message and set status
         for neighbor in self.neighbors.values():
-            if neighbor.lastMessage > rospy.get_rostime() - self.commThreshold:
-                neighbor.incomm = True
-            else:
-                neighbor.incomm = False
+            neighbor.incomm = neighbor.lastMessage > rospy.get_rostime() - self.commThreshold
 
         # Same with base station
-        if self.base.lastMessage > rospy.get_rostime() - self.commThreshold:
-            self.base.incomm = True
-        else:
-            self.base.incomm = False
+        self.base.incomm = self.base.lastMessage > rospy.get_rostime() - self.commThreshold
 
     # Next 3 functions are just for simulated comms.  Otherwise simcomm is True.
     def simCommChecker(self, data, nid):
@@ -333,6 +344,10 @@ class MultiAgent:
                     self.beacons[beacon.id].pos = beacon.pos
                     self.beacons[beacon.id].active = True
 
+    def deployBeacon(self):
+        # Deploy a physical beacon
+        pass
+
     def spawnBeacon(self, inplace):
         spawn = False
         # Find the first available beacon for this agent
@@ -354,10 +369,13 @@ class MultiAgent:
             rospy.wait_for_service(service)
             set_state = rospy.ServiceProxy(service, SetModelState)
 
+            # Get the yaw from the quaternion
             pose = self.agent.odometry.pose.pose
-            (roll, pitch, yaw) = tf.transformations.euler_from_quaternion(
-                [pose.orientation.x, pose.orientation.y,
-                 pose.orientation.z, pose.orientation.w])
+            x = pose.orientation.x
+            y = pose.orientation.y
+            z = pose.orientation.z
+            w = pose.orientation.w
+            yaw = math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
 
             if inplace:
                 offset = 1
@@ -376,11 +394,10 @@ class MultiAgent:
                 ret = set_state(state)
                 self.numBeacons = self.numBeacons - 1
                 self.beacons[spawn].active = True
-                self.beacons[spawn].incomm = True
                 self.beacons[spawn].simcomm = True
                 self.beacons[spawn].pos = pose.position
                 print(ret.status_message)
-            except Exception, e:
+            except Exception as e:
                 rospy.logerr('Error calling service: modestate %s', str(e))
         else:
             print("no beacon to spawn")
@@ -395,7 +412,9 @@ class MultiAgent:
 
             # We're connected to the mesh, either through anchor or beacon(s)
             if self.base.incomm:
-                anchorDist = math.sqrt((myPos.x - self.anchorPos.x)**2 + (myPos.y - self.anchorPos.y)**2 + (myPos.z - self.anchorPos.z)**2)
+                anchorDist = math.sqrt((myPos.x - self.anchorPos.x)**2 +
+                                       (myPos.y - self.anchorPos.y)**2 +
+                                       (myPos.z - self.anchorPos.z)**2)
 
                 # Distance based drop only kicks in once out of anchor range
                 if anchorDist > self.maxDist:
@@ -406,7 +425,9 @@ class MultiAgent:
                             # Count the beacons we know about, and check distance
                             numBeacons = numBeacons + 1
                             pos = beacon.pos
-                            dist = math.sqrt((myPos.x - pos.x)**2 + (myPos.y - pos.y)**2 + (myPos.z - pos.z)**2)
+                            dist = math.sqrt((myPos.x - pos.x)**2 +
+                                             (myPos.y - pos.y)**2 +
+                                             (myPos.z - pos.z)**2)
 
                             # Count how many beacons are past max range
                             if dist > self.maxDist:
@@ -421,7 +442,10 @@ class MultiAgent:
                     dropBeacon = False
 
                 if dropBeacon:
-                    self.spawnBeacon(True)
+                    if self.useSimComms:
+                        self.spawnBeacon(True)
+                    else:
+                        self.deployBeacon()
             else:
                 # If we're not talking to the base station, attempt to reverse drop
                 # self.spawnBeacon(False)
@@ -430,7 +454,9 @@ class MultiAgent:
     def artifactCheck(self):
         # Check the artifact list received from the artifact manager for new artifacts
         for artifact in self.agent.newArtifacts.artifacts:
-            artifact_id = str(artifact.position.x) + str(artifact.position.y) + str(artifact.position.z)
+            artifact_id = (str(artifact.position.x) +
+                           str(artifact.position.y) +
+                           str(artifact.position.z))
             if artifact_id not in self.artifacts:
                 self.artifacts[artifact_id] = ArtifactReport(artifact, artifact_id)
                 self.report = True
@@ -488,9 +514,8 @@ class MultiAgent:
         return
 
 
-# TODO fix for launch files, python3 and namespace
 if __name__ == '__main__':
-    ma = MultiAgent(sys.argv[1], sys.argv[2])
+    ma = MultiAgent()
 
     try:
         ma.start()
