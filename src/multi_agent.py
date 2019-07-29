@@ -35,7 +35,6 @@ class Neighbor(object):
         self.commBeacons = BeaconArray()
         self.newArtifacts = ArtifactArray()
         self.lastMessage = rospy.get_rostime()
-        self.lastCommCheck = rospy.get_rostime()
         self.incomm = True
         self.simcomm = True
 
@@ -84,16 +83,23 @@ class Agent(Neighbor):
         self.neighbors = {}
 
 
+class Base(object):
+    """ Data structure to hold pertinent information about the base station """
+
+    def __init__(self):
+        self.lastMessage = rospy.get_rostime()
+        self.incomm = True
+        self.simcomm = True
+
+
 class BeaconObj(object):
     """ Data structure to hold pertinent information about beacons """
 
     def __init__(self, agent):
         self.id = agent
         self.pos = Point()
-        self.incomm = True
         self.simcomm = True
         self.active = False
-        self.lastCommCheck = rospy.get_rostime()
 
 
 class ArtifactReport:
@@ -125,6 +131,7 @@ class DataListener:
     def Receiver(self, data, parameter):
         if self.agent.simcomm:
             setattr(self.agent, parameter, data)
+            self.agent.lastMessage = rospy.get_rostime()
 
         # Throttle our updates to at least faster than the multi-agent node
         # Don't throttle an octomap or it doesn't update properly
@@ -146,10 +153,19 @@ class MultiAgent:
         self.artifacts = {}
         self.monitor = {}
         self.maxDist = 20  # distance to drop beacons automatically
+        self.commThreshold = rospy.Duration(2)  # time without message for lost comm
         self.useSimComms = True
         self.report = False
 
+        # Anchor is at a static position
+        # Move to launch file
+        self.anchorPos = Point()
+        self.anchorPos.x = 1.0
+        self.anchorPos.y = 0.0
+        self.anchorPos.z = 0.1
+
         # Define which nodes republish information to display
+        # Could add this to launch file
         self.monitors = ['Anchor']
 
         # Setup possible beacons to deploy for this agent
@@ -163,6 +179,7 @@ class MultiAgent:
         while self.start_time.secs == 0:
             self.start_time = rospy.get_rostime()
 
+        # Initialize object for our own data
         self.agent = Agent(self.id)
 
         # Setup the internal listeners if we're a robot
@@ -173,9 +190,17 @@ class MultiAgent:
             self.stop = Bool()
             self.stop.data = False
 
+        # Initialize base station
+        # Need to change subscriber type depending on what we'll actually listen to
+        base_topic = '/Anchor/commcheck'
+        self.base = Base()
+        self.base_sub = rospy.Subscriber(base_topic, CommsCheckArray, self.BaseMonitor)
+
         if self.useSimComms:
             comm_topic = '/' + self.id + '/commcheck'
-            self.comm_sub[self.id] = rospy.Subscriber(comm_topic, CommsCheckArray, self.CommChecker, self.id)
+            self.comm_sub[self.id] = rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, self.id)
+            comm_topic = '/Anchor/commcheck'
+            self.comm_sub[self.id] = rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, 'Anchor')
 
         # Setup the beacons.  For real robots the names shouldn't matter as long as consistent
         # May need to code the possible ones for each robot though so they don't deploy
@@ -185,10 +210,10 @@ class MultiAgent:
             self.beacons[nid] = BeaconObj(nid)
             if self.useSimComms:
                 comm_topic = '/' + nid + '/commcheck'
-                self.comm_sub[nid] = rospy.Subscriber(comm_topic, CommsCheckArray, self.CommChecker, nid)
+                self.comm_sub[nid] = rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
 
         # Setup all of the neighbors.  This should either be hardcoded or added as a parameter
-        neighbors = ['Anchor', 'X1', 'X2']
+        neighbors = ['X1', 'X2']
 
         # Setup the listeners for each neighbor
         for nid in [n for n in neighbors if n != self.id]:
@@ -197,7 +222,7 @@ class MultiAgent:
 
             if self.useSimComms:
                 comm_topic = '/' + nid + '/commcheck'
-                self.comm_sub[nid] = rospy.Subscriber(comm_topic, CommsCheckArray, self.CommChecker, nid)
+                self.comm_sub[nid] = rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
 
             # Setup topics for visualization at whichever monitors are specified (usually base)
             if self.id in self.monitors:
@@ -240,8 +265,6 @@ class MultiAgent:
     def publishBeacons(self):
         commBeacons = []
         for beacon in self.beacons.values():
-            # TODO use last message timer...will be tricky!
-            beacon.incomm = beacon.simcomm
             commBeacon = Beacon()
             commBeacon.id = beacon.id
             commBeacon.active = beacon.active
@@ -250,7 +273,27 @@ class MultiAgent:
 
         self.beacon_pub.publish(commBeacons)
 
-    def CommChecker(self, data, nid):
+    def BaseMonitor(self, data):
+        # For now just recording that we received a message
+        if self.base.simcomm:
+            self.base.lastMessage = rospy.get_rostime()
+
+    def CommCheck(self):
+        # Simply check when the last time we saw a message and set status
+        for neighbor in self.neighbors.values():
+            if neighbor.lastMessage > rospy.get_rostime() - self.commThreshold:
+                neighbor.incomm = True
+            else:
+                neighbor.incomm = False
+
+        # Same with base station
+        if self.base.lastMessage > rospy.get_rostime() - self.commThreshold:
+            self.base.incomm = True
+        else:
+            self.base.incomm = False
+
+    # Next 3 functions are just for simulated comms.  Otherwise simcomm is True.
+    def simCommChecker(self, data, nid):
         # If we're checking our direct comm, set simcomm directly
         if nid == self.id:
             for neighbor in data.data:
@@ -275,8 +318,20 @@ class MultiAgent:
         for simcomm in self.simcomms.values():
             if 'B' in simcomm.id:
                 self.beacons[simcomm.id].simcomm = simcomm.incomm
-            else:
+            elif simcomm.id != 'Anchor':
                 self.neighbors[simcomm.id].simcomm = simcomm.incomm
+
+        # Base comms are whatever our status with the anchor is
+        if self.simcomms and self.id != 'Anchor':
+            self.base.simcomm = self.simcomms['Anchor'].incomm
+
+    def updateBeacons(self):
+        for neighbor in self.neighbors.values():
+            # Make sure our beacon list matches our neighbors'
+            for beacon in neighbor.commBeacons.data:
+                if beacon.active and not self.beacons[beacon.id].active:
+                    self.beacons[beacon.id].pos = beacon.pos
+                    self.beacons[beacon.id].active = True
 
     def spawnBeacon(self, inplace):
         spawn = False
@@ -335,51 +390,42 @@ class MultiAgent:
         if self.numBeacons > 0:
             myPos = self.agent.odometry.pose.pose.position
             numBeacons = 0
+            numDistBeacons = 0
             dropBeacon = False
-            backBeacon = []
-            # Find how many beacons are active and that we can talk to
-            for beacon in self.beacons.values():
-                if beacon.active:
-                    backBeacon.append(False)
-                    # Find the ones we're in comm with, and how far they are
-                    if beacon.incomm:
-                        numBeacons = numBeacons + 1
-                        pos = beacon.pos
-                        dist = math.sqrt((myPos.x - pos.x)**2 + (myPos.y - pos.y)**2 + (myPos.z - pos.z)**2)
 
-                        if dist > self.maxDist:
-                            dropBeacon = True
+            # We're connected to the mesh, either through anchor or beacon(s)
+            if self.base.incomm:
+                anchorDist = math.sqrt((myPos.x - self.anchorPos.x)**2 + (myPos.y - self.anchorPos.y)**2 + (myPos.z - self.anchorPos.z)**2)
 
-                    else:
-                        backBeacon[-1] = True
-
-            if len(backBeacon) == 0:
-                backBeacon = [False]
-
-            # If there are no beacons, and we're talking to anchor,
-            # check to see if we're getting far away and need to drop one
-            if self.neighbors['Anchor'].incomm and numBeacons == 0:
-                anchorPos = self.neighbors['Anchor'].odometry.pose.pose.position
-                anchorDist = math.sqrt((myPos.x - anchorPos.x)**2 + (myPos.y - anchorPos.y)**2 + (myPos.z - anchorPos.z)**2)
-
-                if anchorDist > self.maxDist and numBeacons == 0:
-                    print("anchor distance limit, let's drop!")
+                # Distance based drop only kicks in once out of anchor range
+                if anchorDist > self.maxDist:
                     dropBeacon = True
 
-            # If there are no beacons and we've lost comm we should try to drop
-            elif not self.neighbors['Anchor'].incomm and numBeacons == 0:
-                print("no anchor and no beacons, let's drop!")
-                backBeacon = [True]
-            elif numBeacons > 1:
-                dropBeacon = False
-            elif dropBeacon:
-                print(self.id, "beacon distance limit!")
+                    for beacon in self.beacons.values():
+                        if beacon.active:
+                            # Count the beacons we know about, and check distance
+                            numBeacons = numBeacons + 1
+                            pos = beacon.pos
+                            dist = math.sqrt((myPos.x - pos.x)**2 + (myPos.y - pos.y)**2 + (myPos.z - pos.z)**2)
 
-            # Either drop a beacon in place or drop one behind if we lost comm
-            if dropBeacon:
-                self.spawnBeacon(True)
-            elif all(backBeacon):
-                self.spawnBeacon(False)
+                            # Count how many beacons are past max range
+                            if dist > self.maxDist:
+                                numDistBeacons = numDistBeacons + 1
+                                dropBeacon = True
+                else:
+                    # Check to see if we're at a node and need to drop
+                    pass
+
+                # Cancel the drop if we have more than one beacon in range
+                if numBeacons - numDistBeacons > 0:
+                    dropBeacon = False
+
+                if dropBeacon:
+                    self.spawnBeacon(True)
+            else:
+                # If we're not talking to the base station, attempt to reverse drop
+                # self.spawnBeacon(False)
+                pass
 
     def artifactCheck(self):
         # Check the artifact list received from the artifact manager for new artifacts
@@ -403,31 +449,29 @@ class MultiAgent:
             if self.useSimComms:
                 self.simCommCheck()
 
-            for neighbor in self.neighbors.values():
-                # TODO make incomm check when the last message was pulled
-                neighbor.incomm = neighbor.simcomm
+            # Update incomm based on last message seen
+            self.CommCheck()
 
-                # Make sure our beacon list matches our neighbors'
-                for beacon in neighbor.commBeacons.data:
-                    if beacon.active and not self.beacons[beacon.id].active:
-                        self.beacons[beacon.id].pos = beacon.pos
-                        self.beacons[beacon.id].active = True
-
+            # Reconcile beacon list with neighbors', and publish the list
+            self.updateBeacons()
             self.publishBeacons()
 
             # Update the visualization topics
             if self.id in self.monitors:
                 self.publishNeighbors()
 
+            # Non-robot nodes don't need to do the following
             if self.type == 'robot':
+                # Check if we need to drop a beacon
                 self.beaconCheck()
+                # Make sure our internal artifact list is up to date, and if we need to report
                 self.artifactCheck()
 
                 # Change the goal to go home to report
                 if self.report:
                     # If we're in comms, assume the current list is reported
                     # Eventually may want to add a confirmation from base
-                    if self.neighbors['Anchor'].incomm:
+                    if self.base.incomm:
                         self.report = False
                         self.task_pub.publish('Explore')
                         for artifact in self.artifacts.values():

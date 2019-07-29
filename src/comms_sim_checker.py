@@ -69,7 +69,7 @@ class CommsChecker:
 
     def start(self):
         rate = rospy.Rate(2)
-        offset = rospy.Duration(5)
+        offset = rospy.Duration(1)
         while not rospy.is_shutdown():
             curtime = rospy.get_rostime()
 
