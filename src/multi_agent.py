@@ -3,6 +3,7 @@ from __future__ import print_function
 import math
 import rospy
 
+from std_msgs.msg import Int8
 from std_msgs.msg import Bool
 from std_msgs.msg import String
 from nav_msgs.msg import Odometry
@@ -26,6 +27,8 @@ class Neighbor(object):
         self.cid = String()
         self.odometry = Odometry()
         self.goal = PoseStamped()
+        self.atnode = Bool()
+        self.junctions = Int8()
         self.map = MarkerArray()
         self.commBeacons = BeaconArray()
         self.newArtifacts = ArtifactArray()
@@ -117,9 +120,18 @@ class DataListener:
         self.odom_sub = \
             rospy.Subscriber('/' + self.agent.id + '/odometry',
                              Odometry, self.Receiver, 'odometry', queue_size=1)
+        # self.goal_sub = \
+        #     rospy.Subscriber('/' + self.agent.id + '/frontier_goal_pose',
+        # TODO Need to check this is the right goal to compare
         self.goal_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/frontier_goal_pose',
+            rospy.Subscriber('/' + self.agent.id + '/node_skeleton/next_turn_pose',
                              PoseStamped, self.Receiver, 'goal', queue_size=1)
+        self.node_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/at_a_node',
+                             Bool, self.Receiver, 'atnode', queue_size=1)
+        self.junction_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/junction_count',
+                             Int8, self.Receiver, 'junctions', queue_size=1)
         self.beacon_sub = \
             rospy.Subscriber('/' + self.agent.id + '/beacons',
                              BeaconArray, self.Receiver, 'commBeacons', queue_size=1)
@@ -153,6 +165,8 @@ class MultiAgent:
         # Load parameters from the launch file
         self.id = rospy.get_param('multi_agent/vehicle', 'X1')
         self.type = rospy.get_param('multi_agent/type', 'robot')
+        # Rate to run the node at
+        self.rate = rospy.get_param('multi_agent/rate', 1)
         # Whether to use simulated comms or real comms
         self.useSimComms = rospy.get_param('multi_agent/simcomms', False)
         # Time without message for lost comm
@@ -201,9 +215,8 @@ class MultiAgent:
         if self.type == 'robot':
             DataListener(self.agent, 'robot')
             self.task_pub = rospy.Publisher('task', String, queue_size=10)
+            self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
             self.stop_pub = rospy.Publisher('stop', Bool, queue_size=10)
-            self.stop = Bool()
-            self.stop.data = False
 
         # Initialize base station
         # Need to change subscriber type depending on what we'll actually listen to
@@ -344,63 +357,72 @@ class MultiAgent:
                     self.beacons[beacon.id].pos = beacon.pos
                     self.beacons[beacon.id].active = True
 
-    def deployBeacon(self):
-        # Deploy a physical beacon
-        pass
-
-    def spawnBeacon(self, inplace):
-        spawn = False
+    def deployBeacon(self, inplace):
+        deploy = False
         # Find the first available beacon for this agent
         # As long as two agents don't try to drop beacons at the exact same time this is ok
         for beacon in self.beacons.values():
             if not beacon.active:
-                spawn = beacon.id
+                deploy = beacon.id
                 break
 
-        if spawn:
-            self.stop.data = True
-            self.stop_pub.publish(self.stop)
+        if deploy:
+            # Stop the robot and publish message to deployment mechanism
+            self.stop_pub.publish(True)
+            self.deploy_pub.publish(True)
 
-            # For now we're just moving the beacon 3 units behind which will hopefull
-            # be in range of the anchor or previous beacon
-            # Either need to identify location before comm loss, or make this a guidance
-            # command to return to a point in range
-            service = '/gazebo/set_model_state'
-            rospy.wait_for_service(service)
-            set_state = rospy.ServiceProxy(service, SetModelState)
-
-            # Get the yaw from the quaternion
             pose = self.agent.odometry.pose.pose
-            x = pose.orientation.x
-            y = pose.orientation.y
-            z = pose.orientation.z
-            w = pose.orientation.w
-            yaw = math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
 
-            if inplace:
-                offset = 1
-            else:
-                offset = 6
+            if self.useSimComms:
+                # Either need to identify location before comm loss, or make this a guidance
+                # command to return to a point in range
+                service = '/gazebo/set_model_state'
+                rospy.wait_for_service(service)
+                set_state = rospy.ServiceProxy(service, SetModelState)
 
-            pose.position.x = pose.position.x - math.cos(yaw) * offset
-            pose.position.y = pose.position.y - math.sin(yaw) * offset
+                # Get the yaw from the quaternion
+                x = pose.orientation.x
+                y = pose.orientation.y
+                z = pose.orientation.z
+                w = pose.orientation.w
+                yaw = math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
 
-            state = ModelState()
-            state.model_name = spawn
-            state.pose = pose
+                if inplace:
+                    offset = 1
+                else:
+                    offset = 6
 
-            print("moving beacon", spawn)
+                pose.position.x = pose.position.x - math.cos(yaw) * offset
+                pose.position.y = pose.position.y - math.sin(yaw) * offset
+
+                state = ModelState()
+                state.model_name = deploy
+                state.pose = pose
+
+            print(self.id, "deploying beacon", deploy)
             try:
-                ret = set_state(state)
+                if self.useSimComms:
+                    # Drop the simulated beacon, and pause to simulate drop
+                    ret = set_state(state)
+                    rospy.sleep(3)
+                    print(ret.status_message)
+                else:
+                    # Need to monitor a success message or something
+                    # For now just sit to simulate a drop
+                    rospy.sleep(10)
+
+                # Resume the mission
+                self.stop_pub.publish(False)
+                self.deploy_pub.publish(False)
+
                 self.numBeacons = self.numBeacons - 1
-                self.beacons[spawn].active = True
-                self.beacons[spawn].simcomm = True
-                self.beacons[spawn].pos = pose.position
-                print(ret.status_message)
+                self.beacons[deploy].active = True
+                self.beacons[deploy].simcomm = True
+                self.beacons[deploy].pos = pose.position
             except Exception as e:
-                rospy.logerr('Error calling service: modestate %s', str(e))
+                rospy.logerr('Error deploying beacon %s', str(e))
         else:
-            print("no beacon to spawn")
+            print(self.id, "no beacon to deploy")
 
     def beaconCheck(self):
         # Check if we need to drop a beacon if we have any beacons to drop
@@ -420,35 +442,33 @@ class MultiAgent:
                 if anchorDist > self.maxDist:
                     dropBeacon = True
 
-                    for beacon in self.beacons.values():
-                        if beacon.active:
-                            # Count the beacons we know about, and check distance
-                            numBeacons = numBeacons + 1
-                            pos = beacon.pos
-                            dist = math.sqrt((myPos.x - pos.x)**2 +
-                                             (myPos.y - pos.y)**2 +
-                                             (myPos.z - pos.z)**2)
+                # Drop a beacon if we're at a node
+                if self.agent.atnode.data and self.agent.junctions.data > 2:
+                    dropBeacon = True
 
-                            # Count how many beacons are past max range
-                            if dist > self.maxDist:
-                                numDistBeacons = numDistBeacons + 1
-                                dropBeacon = True
-                else:
-                    # Check to see if we're at a node and need to drop
-                    pass
+                for beacon in self.beacons.values():
+                    if beacon.active:
+                        # Count the beacons we know about, and check distance
+                        numBeacons = numBeacons + 1
+                        pos = beacon.pos
+                        dist = math.sqrt((myPos.x - pos.x)**2 +
+                                         (myPos.y - pos.y)**2 +
+                                         (myPos.z - pos.z)**2)
+
+                        # Count how many beacons are past max range
+                        if dist > self.maxDist:
+                            numDistBeacons = numDistBeacons + 1
+                            dropBeacon = True
 
                 # Cancel the drop if we have more than one beacon in range
                 if numBeacons - numDistBeacons > 0:
                     dropBeacon = False
 
                 if dropBeacon:
-                    if self.useSimComms:
-                        self.spawnBeacon(True)
-                    else:
-                        self.deployBeacon()
+                    self.deployBeacon(True)
             else:
                 # If we're not talking to the base station, attempt to reverse drop
-                # self.spawnBeacon(False)
+                # self.deployBeacon(False)
                 pass
 
     def artifactCheck(self):
@@ -470,7 +490,7 @@ class MultiAgent:
                     break
 
     def start(self):
-        rate = rospy.Rate(1)
+        rate = rospy.Rate(self.rate)
         while not rospy.is_shutdown():
             if self.useSimComms:
                 self.simCommCheck()
@@ -505,10 +525,6 @@ class MultiAgent:
                     else:
                         print(self.id, 'return to report...')
                         self.task_pub.publish('Home')
-
-                # Make sure we're not stopped after dropping a beacon
-                self.stop.data = False
-                self.stop_pub.publish(self.stop)
 
             rate.sleep()
         return

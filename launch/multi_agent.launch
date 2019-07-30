@@ -4,12 +4,14 @@
   <arg name="vehicle" default="X1" />
   <!-- Type of node.  Current options are 'robot' and 'base' -->
   <arg name="type" default="robot" />
+  <!-- Rate to run the node at -->
+  <arg name="rate" default="1" />
   <!-- Whether to use simulated comms -->
   <arg name="simcomms" default="false" />
   <!-- How long without a message to consider 'lost comms' -->
   <arg name="commThreshold" default="2" />
   <!-- How far to drive before automatically dropping a beacon -->
-  <arg name="dropDist" default="14" />
+  <arg name="dropDist" default="20" />
   <!-- How many beacons this agent is carrying.  Ignored for 'base' type. -->
   <arg name="numBeacons" default="2" />
   <!-- Total number of beacons across all deployed agents.  Higher is ok. -->
@@ -25,6 +27,7 @@
     <!-- Parameters -->
     <param name="vehicle" value="$(arg vehicle)" />
     <param name="type" value="$(arg type)" />
+    <param name="rate" value="$(arg rate)" />
     <param name="simcomms" value="$(arg simcomms)" />
     <param name="commThreshold" value="$(arg commThreshold)" />
     <param name="dropDist" value="$(arg dropDist)" />
