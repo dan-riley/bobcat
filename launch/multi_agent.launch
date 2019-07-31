@@ -11,13 +11,17 @@
   <!-- How long without a message to consider 'lost comms' -->
   <arg name="commThreshold" default="2" />
   <!-- How far to drive before automatically dropping a beacon -->
-  <arg name="dropDist" default="20" />
+  <arg name="dropDist" default="50" />
+  <!-- Minimum distance between nodes before dropping another beacon -->
+  <arg name="junctionDist" default="10" />
   <!-- How many beacons this agent is carrying.  Ignored for 'base' type. -->
   <arg name="numBeacons" default="2" />
   <!-- Total number of beacons across all deployed agents.  Higher is ok. -->
   <arg name="totalBeacons" default="4" />
   <!-- List of all potentially deployed neighbors.  Determines what topics are subscribed. -->
   <arg name="potentialNeighbors" default="X1,X2" />
+  <!-- Topic to monitor from base station to ensure we're in comm -->
+  <arg name="baseTopic" default="/Anchor/commcheck" />
   <!-- Approximate location of anchor node, for first beacon drop distance calc -->
   <arg name="anchorX" default="1.0" />
   <arg name="anchorY" default="0.0" />
@@ -31,6 +35,7 @@
     <param name="simcomms" value="$(arg simcomms)" />
     <param name="commThreshold" value="$(arg commThreshold)" />
     <param name="dropDist" value="$(arg dropDist)" />
+    <param name="junctionDist" value="$(arg junctionDist)" />
     <param name="numBeacons" value="$(arg numBeacons)" />
     <param name="totalBeacons" value="$(arg totalBeacons)" />
     <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />

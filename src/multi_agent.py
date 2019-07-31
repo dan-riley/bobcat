@@ -3,7 +3,6 @@ from __future__ import print_function
 import math
 import rospy
 
-from std_msgs.msg import Int8
 from std_msgs.msg import Bool
 from std_msgs.msg import String
 from nav_msgs.msg import Odometry
@@ -28,7 +27,6 @@ class Neighbor(object):
         self.odometry = Odometry()
         self.goal = PoseStamped()
         self.atnode = Bool()
-        self.junctions = Int8()
         self.map = MarkerArray()
         self.commBeacons = BeaconArray()
         self.newArtifacts = ArtifactArray()
@@ -129,9 +127,6 @@ class DataListener:
         self.node_sub = \
             rospy.Subscriber('/' + self.agent.id + '/at_a_node',
                              Bool, self.Receiver, 'atnode', queue_size=1)
-        self.junction_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/junction_count',
-                             Int8, self.Receiver, 'junctions', queue_size=1)
         self.beacon_sub = \
             rospy.Subscriber('/' + self.agent.id + '/beacons',
                              BeaconArray, self.Receiver, 'commBeacons', queue_size=1)
@@ -158,6 +153,10 @@ class DataListener:
             rospy.sleep(0.5)
 
 
+def getDist(pos1, pos2):
+    return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2 + (pos1.z - pos2.z)**2)
+
+
 class MultiAgent:
     """ Initialize a multi-agent node for the agent, publishes data for others and listens """
 
@@ -173,12 +172,15 @@ class MultiAgent:
         self.commThreshold = rospy.Duration(rospy.get_param('multi_agent/commThreshold', False), 2)
         # Distance to drop beacons automatically
         self.maxDist = rospy.get_param('multi_agent/dropDist', 50)
+        # Minimum distance between junctions before dropping another beacon
+        self.junctionDist = rospy.get_param('multi_agent/junctionDist', 10)
         # Number of beacons this robot is carrying
         self.numBeacons = rospy.get_param('multi_agent/numBeacons', 2)
         # Total number of potential beacons
         totalBeacons = rospy.get_param('multi_agent/totalBeacons', 4)
         # Potential robot neighbors to monitor
         neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'X1,X2').split(',')
+        baseTopic = rospy.get_param('multi_agent/baseTopic', '/Anchor/commcheck')
 
         # Static anchor position
         self.anchorPos = Point()
@@ -216,13 +218,11 @@ class MultiAgent:
             DataListener(self.agent, 'robot')
             self.task_pub = rospy.Publisher('task', String, queue_size=10)
             self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
-            self.stop_pub = rospy.Publisher('stop', Bool, queue_size=10)
+            self.stop_pub = rospy.Publisher('e_stop', Bool, queue_size=10)
 
         # Initialize base station
-        # Need to change subscriber type depending on what we'll actually listen to
-        base_topic = '/Anchor/commcheck'
         self.base = Base()
-        self.base_sub = rospy.Subscriber(base_topic, CommsCheckArray, self.BaseMonitor)
+        self.base_sub = rospy.Subscriber(baseTopic, CommsCheckArray, self.BaseMonitor)
 
         if self.useSimComms:
             self.comm_sub[self.id] = \
@@ -279,6 +279,19 @@ class MultiAgent:
             self.mbeacon.color.g = 1.0
             self.mbeacon.color.b = 1.0
 
+            self.monitor['artifacts'] = rospy.Publisher('martifacts', Marker, queue_size=10)
+            self.martifact = Marker()
+            self.martifact.header.frame_id = 'world'
+            self.martifact.type = self.martifact.CUBE_LIST
+            self.martifact.action = self.martifact.ADD
+            self.martifact.scale.x = 0.5
+            self.martifact.scale.y = 0.5
+            self.martifact.scale.z = 0.5
+            self.martifact.color.a = 1.0
+            self.martifact.color.r = 1.0
+            self.martifact.color.g = 0.0
+            self.martifact.color.b = 0.0
+
     def publishNeighbors(self):
         # Topics for visualization at the anchor node
         for neighbor in self.neighbors.values():
@@ -289,8 +302,12 @@ class MultiAgent:
         self.mbeacon.points = []
         for beacon in self.beacons.values():
             self.mbeacon.points.append(beacon.pos)
-
         self.monitor['beacons'].publish(self.mbeacon)
+
+        self.martifact.points = []
+        for artifact in self.artifacts.values():
+            self.martifact.points.append(artifact.artifact.position)
+        self.monitor['artifacts'].publish(self.martifact)
 
     def publishBeacons(self):
         commBeacons = []
@@ -388,7 +405,7 @@ class MultiAgent:
                 yaw = math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
 
                 if inplace:
-                    offset = 1
+                    offset = 0.5
                 else:
                     offset = 6
 
@@ -434,29 +451,29 @@ class MultiAgent:
 
             # We're connected to the mesh, either through anchor or beacon(s)
             if self.base.incomm:
-                anchorDist = math.sqrt((myPos.x - self.anchorPos.x)**2 +
-                                       (myPos.y - self.anchorPos.y)**2 +
-                                       (myPos.z - self.anchorPos.z)**2)
+                anchorDist = getDist(myPos, self.anchorPos)
+                # If we have different ranges for anchor-beacon and beacon-beacon, change this
+                checkDist = self.maxDist
 
                 # Distance based drop only kicks in once out of anchor range
                 if anchorDist > self.maxDist:
                     dropBeacon = True
+                    checkDist = self.maxDist
 
-                # Drop a beacon if we're at a node
-                if self.agent.atnode.data and self.agent.junctions.data > 2:
+                # Always drop a beacon if we're at a node and we're in comm
+                # If beacons are strong enough may want to restrict distance
+                if self.agent.atnode.data:
                     dropBeacon = True
+                    checkDist = self.junctionDist
 
                 for beacon in self.beacons.values():
                     if beacon.active:
                         # Count the beacons we know about, and check distance
                         numBeacons = numBeacons + 1
-                        pos = beacon.pos
-                        dist = math.sqrt((myPos.x - pos.x)**2 +
-                                         (myPos.y - pos.y)**2 +
-                                         (myPos.z - pos.z)**2)
+                        dist = getDist(myPos, beacon.pos)
 
                         # Count how many beacons are past max range
-                        if dist > self.maxDist:
+                        if dist > checkDist:
                             numDistBeacons = numDistBeacons + 1
                             dropBeacon = True
 
@@ -470,6 +487,18 @@ class MultiAgent:
                 # If we're not talking to the base station, attempt to reverse drop
                 # self.deployBeacon(False)
                 pass
+
+    def baseArtifacts(self):
+        for neighbor in self.neighbors.values():
+            if neighbor.incomm:
+                # Check the artifact list received from the artifact manager for new artifacts
+                for artifact in neighbor.newArtifacts.artifacts:
+                    artifact_id = (str(artifact.position.x) +
+                                   str(artifact.position.y) +
+                                   str(artifact.position.z))
+                    if artifact_id not in self.artifacts:
+                        self.artifacts[artifact_id] = ArtifactReport(artifact, artifact_id)
+                        print(self.id, 'new artifact', artifact_id)
 
     def artifactCheck(self):
         # Check the artifact list received from the artifact manager for new artifacts
@@ -504,6 +533,7 @@ class MultiAgent:
 
             # Update the visualization topics
             if self.id in self.monitors:
+                self.baseArtifacts()
                 self.publishNeighbors()
 
             # Non-robot nodes don't need to do the following
