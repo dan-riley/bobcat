@@ -157,6 +157,31 @@ def getDist(pos1, pos2):
     return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2 + (pos1.z - pos2.z)**2)
 
 
+def getYaw(orientation):
+    x = orientation.x
+    y = orientation.y
+    z = orientation.z
+    w = orientation.w
+    return math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
+
+
+def averagePose(history):
+    pos = Point()
+    yaw = 0
+    for pose in history:
+        pos.x = pos.x + pose.position.x
+        pos.y = pos.y + pose.position.y
+        pos.z = pos.z + pose.position.z
+        yaw = yaw + getYaw(pose.orientation)
+
+    pos.x = pos.x / float(len(history))
+    pos.y = pos.y / float(len(history))
+    pos.z = pos.z / float(len(history))
+    yaw = yaw / float(len(history))
+
+    return pos, yaw
+
+
 class MultiAgent:
     """ Initialize a multi-agent node for the agent, publishes data for others and listens """
 
@@ -195,6 +220,8 @@ class MultiAgent:
         self.commcheck = {}
         self.artifacts = {}
         self.monitor = {}
+        self.history = []
+        self.hislen = self.rate * 10  # How long the odometry history should be
         self.report = False
 
         # Define which nodes republish information to display
@@ -366,6 +393,11 @@ class MultiAgent:
         if self.simcomms and self.id != 'Anchor':
             self.base.simcomm = self.simcomms['Anchor'].incomm
 
+    def updateHistory(self):
+        self.history.append(self.agent.odometry.pose.pose)
+        if len(self.history) > self.hislen:
+            self.history = self.history[-self.hislen:]
+
     def updateBeacons(self):
         for neighbor in self.neighbors.values():
             # Make sure our beacon list matches our neighbors'
@@ -398,11 +430,7 @@ class MultiAgent:
                 set_state = rospy.ServiceProxy(service, SetModelState)
 
                 # Get the yaw from the quaternion
-                x = pose.orientation.x
-                y = pose.orientation.y
-                z = pose.orientation.z
-                w = pose.orientation.w
-                yaw = math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
+                yaw = getYaw(pose.orientation)
 
                 if inplace:
                     offset = 0.5
@@ -444,18 +472,23 @@ class MultiAgent:
     def beaconCheck(self):
         # Check if we need to drop a beacon if we have any beacons to drop
         if self.numBeacons > 0:
-            myPos = self.agent.odometry.pose.pose.position
+            pose = self.agent.odometry.pose.pose
             numBeacons = 0
             numDistBeacons = 0
             dropBeacon = False
 
             # We're connected to the mesh, either through anchor or beacon(s)
             if self.base.incomm:
-                anchorDist = getDist(myPos, self.anchorPos)
+                # Update our movement history.  May need to move up one level if we use out of comm
+                self.updateHistory()
+
+                # Once we pass the maxDist we could set a flag so we don't keep recalculating this
+                anchorDist = getDist(pose.position, self.anchorPos)
                 # If we have different ranges for anchor-beacon and beacon-beacon, change this
                 checkDist = self.maxDist
 
                 # Distance based drop only kicks in once out of anchor range
+                # If we're at end of anchor range, drop beacon
                 if anchorDist > self.maxDist:
                     dropBeacon = True
                     checkDist = self.maxDist
@@ -465,12 +498,23 @@ class MultiAgent:
                 if self.agent.atnode.data:
                     dropBeacon = True
                     checkDist = self.junctionDist
+                # Check if it looks like we're going around a corner
+                elif len(self.history) == self.hislen:
+                    pos1, yaw1 = averagePose(self.history[:int(0.4 * self.hislen)])
+                    pos2, yaw2 = averagePose(self.history[int(0.6 * self.hislen):])
+
+                    # Check that we've turned and moved far enough, over history and last second
+                    # Will need to retune these for real vehicle dynamics
+                    if (getDist(pos1, pos2) > 4 and abs(yaw2 - yaw1) > 0.5 and
+                            getDist(self.history[-2].position, self.history[-1].position) > 0.5):
+                        dropBeacon = True
+                        checkDist = self.junctionDist + 5
 
                 for beacon in self.beacons.values():
                     if beacon.active:
                         # Count the beacons we know about, and check distance
                         numBeacons = numBeacons + 1
-                        dist = getDist(myPos, beacon.pos)
+                        dist = getDist(pose.position, beacon.pos)
 
                         # Count how many beacons are past max range
                         if dist > checkDist:
