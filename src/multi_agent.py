@@ -91,8 +91,9 @@ class Base(object):
 class BeaconObj(object):
     """ Data structure to hold pertinent information about beacons """
 
-    def __init__(self, agent):
+    def __init__(self, agent, owner):
         self.id = agent
+        self.owner = owner
         self.pos = Point()
         self.simcomm = True
         self.active = False
@@ -199,10 +200,12 @@ class MultiAgent:
         self.maxDist = rospy.get_param('multi_agent/dropDist', 50)
         # Minimum distance between junctions before dropping another beacon
         self.junctionDist = rospy.get_param('multi_agent/junctionDist', 10)
+        # Whether to use turn detection to drop beacons
+        self.turnDetect = rospy.get_param('multi_agent/turnDetect', True)
         # Number of beacons this robot is carrying
-        self.numBeacons = rospy.get_param('multi_agent/numBeacons', 2)
+        self.numBeacons = rospy.get_param('multi_agent/numBeacons', 4)
         # Total number of potential beacons
-        totalBeacons = rospy.get_param('multi_agent/totalBeacons', 4)
+        totalBeacons = rospy.get_param('multi_agent/totalBeacons', 8)
         # Potential robot neighbors to monitor
         neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'X1,X2').split(',')
         baseTopic = rospy.get_param('multi_agent/baseTopic', '/Anchor/commcheck')
@@ -257,12 +260,20 @@ class MultiAgent:
             self.comm_sub[self.id] = \
                 rospy.Subscriber('/Anchor/commcheck', CommsCheckArray, self.simCommChecker, 'Anchor')
 
+        # Get our 'number id' for beacon assignment
+        if self.type == 'robot':
+            sid = int(self.id[-1])
+        else:
+            sid = 0
+
         # Setup the beacons.  For real robots the names shouldn't matter as long as consistent
-        # May need to code the possible ones for each robot though so they don't deploy
-        # duplicate names...but if they only deploy when connected to mesh it shouldn't matter
         for i in range(1, totalBeacons + 1):
             nid = 'B' + str(i)
-            self.beacons[nid] = BeaconObj(nid)
+
+            # Determine if this agent 'owns' the beacon so we don't have conflicting names
+            owner = i <= sid * self.numBeacons and i > (sid - 1) * self.numBeacons
+
+            self.beacons[nid] = BeaconObj(nid, owner)
             if self.useSimComms:
                 comm_topic = '/' + nid + '/commcheck'
                 self.comm_sub[nid] = \
@@ -409,9 +420,8 @@ class MultiAgent:
     def deployBeacon(self, inplace):
         deploy = False
         # Find the first available beacon for this agent
-        # As long as two agents don't try to drop beacons at the exact same time this is ok
         for beacon in self.beacons.values():
-            if not beacon.active:
+            if beacon.owner and not beacon.active:
                 deploy = beacon.id
                 break
 
@@ -499,7 +509,7 @@ class MultiAgent:
                     dropBeacon = True
                     checkDist = self.junctionDist
                 # Check if it looks like we're going around a corner
-                elif len(self.history) == self.hislen:
+                elif self.turnDetect and len(self.history) == self.hislen:
                     pos1, yaw1 = averagePose(self.history[:int(0.4 * self.hislen)])
                     pos2, yaw2 = averagePose(self.history[int(0.6 * self.hislen):])
 

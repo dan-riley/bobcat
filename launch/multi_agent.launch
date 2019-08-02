@@ -14,6 +14,8 @@
   <arg name="dropDist" default="25" />
   <!-- Minimum distance between nodes before dropping another beacon -->
   <arg name="junctionDist" default="10" />
+  <!-- Whether to use turn detection to drop beacons -->
+  <arg name="turnDetect" default="true" />
   <!-- How many beacons this agent is carrying.  Ignored for 'base' type. -->
   <arg name="numBeacons" default="4" />
   <!-- Total number of beacons across all deployed agents.  Higher is ok. -->
@@ -36,6 +38,7 @@
     <param name="commThreshold" value="$(arg commThreshold)" />
     <param name="dropDist" value="$(arg dropDist)" />
     <param name="junctionDist" value="$(arg junctionDist)" />
+    <param name="turnDetect" value="$(arg turnDetect)" />
     <param name="numBeacons" value="$(arg numBeacons)" />
     <param name="totalBeacons" value="$(arg totalBeacons)" />
     <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
