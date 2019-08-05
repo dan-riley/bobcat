@@ -209,6 +209,7 @@ class MultiAgent:
         # Potential robot neighbors to monitor
         neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'X1,X2').split(',')
         baseTopic = rospy.get_param('multi_agent/baseTopic', '/Anchor/commcheck')
+        baseTopicType = rospy.get_param('multi_agent/baseTopicType', 'CommsCheckArray')
 
         # Static anchor position
         self.anchorPos = Point()
@@ -248,11 +249,11 @@ class MultiAgent:
             DataListener(self.agent, 'robot')
             self.task_pub = rospy.Publisher('task', String, queue_size=10)
             self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
-            self.stop_pub = rospy.Publisher('e_stop', Bool, queue_size=10)
+            self.stop_pub = rospy.Publisher('stop_for_beacon_drop', Bool, queue_size=10)
 
         # Initialize base station
         self.base = Base()
-        self.base_sub = rospy.Subscriber(baseTopic, CommsCheckArray, self.BaseMonitor)
+        self.base_sub = rospy.Subscriber(baseTopic, eval(baseTopicType), self.BaseMonitor)
 
         if self.useSimComms:
             self.comm_sub[self.id] = \
@@ -262,7 +263,10 @@ class MultiAgent:
 
         # Get our 'number id' for beacon assignment
         if self.type == 'robot':
-            sid = int(self.id[-1])
+            try:
+                sid = int(self.id[-2:])
+            except ValueError:
+                sid = int(self.id[-1])
         else:
             sid = 0
 
@@ -478,6 +482,8 @@ class MultiAgent:
                 rospy.logerr('Error deploying beacon %s', str(e))
         else:
             print(self.id, "no beacon to deploy")
+            # Most likely reason it thought we had a beacon is due to restart.  So set num=0.
+            self.numBeacons = 0
 
     def beaconCheck(self):
         # Check if we need to drop a beacon if we have any beacons to drop
@@ -573,6 +579,9 @@ class MultiAgent:
                     break
 
     def start(self):
+        # Wait to start running anything until we've gotten some data and can confirm comms
+        # This should also help to recover any beacons being published by other nodes
+        rospy.sleep(10)
         rate = rospy.Rate(self.rate)
         while not rospy.is_shutdown():
             if self.useSimComms:

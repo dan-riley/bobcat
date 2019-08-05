@@ -24,6 +24,7 @@
   <arg name="potentialNeighbors" default="X1,X2" />
   <!-- Topic to monitor from base station to ensure we're in comm -->
   <arg name="baseTopic" default="/Anchor/commcheck" />
+  <arg name="baseTopicType" default="CommsCheckArray" />
   <!-- Approximate location of anchor node, for first beacon drop distance calc -->
   <arg name="anchorX" default="1.0" />
   <arg name="anchorY" default="0.0" />
@@ -42,6 +43,8 @@
     <param name="numBeacons" value="$(arg numBeacons)" />
     <param name="totalBeacons" value="$(arg totalBeacons)" />
     <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
+    <param name="baseTopic" value="$(arg baseTopic)" />
+    <param name="baseTopicType" value="$(arg baseTopicType)" />
     <param name="anchorX" value="$(arg anchorX)" />
     <param name="anchorY" value="$(arg anchorY)" />
     <param name="anchorZ" value="$(arg anchorZ)" />
