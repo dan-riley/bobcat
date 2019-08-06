@@ -86,6 +86,7 @@ class Base(object):
         self.lastMessage = rospy.get_rostime()
         self.incomm = True
         self.simcomm = True
+        self.commBeacons = BeaconArray()
 
 
 class BeaconObj(object):
@@ -209,7 +210,6 @@ class MultiAgent:
         # Potential robot neighbors to monitor
         neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'X1,X2').split(',')
         baseTopic = rospy.get_param('multi_agent/baseTopic', '/Anchor/commcheck')
-        baseTopicType = rospy.get_param('multi_agent/baseTopicType', 'CommsCheckArray')
 
         # Static anchor position
         self.anchorPos = Point()
@@ -227,10 +227,6 @@ class MultiAgent:
         self.history = []
         self.hislen = self.rate * 10  # How long the odometry history should be
         self.report = False
-
-        # Define which nodes republish information to display
-        # Could add this to launch file, or make any 'base' type use it
-        self.monitors = ['Anchor']
 
         # Zero out the beacons if this is a base station type
         if self.type == 'base':
@@ -253,7 +249,7 @@ class MultiAgent:
 
         # Initialize base station
         self.base = Base()
-        self.base_sub = rospy.Subscriber(baseTopic, eval(baseTopicType), self.BaseMonitor)
+        self.base_sub = rospy.Subscriber(baseTopic, BeaconArray, self.BaseMonitor)
 
         if self.useSimComms:
             self.comm_sub[self.id] = \
@@ -294,7 +290,7 @@ class MultiAgent:
                     rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
 
             # Setup topics for visualization at whichever monitors are specified (usually base)
-            if self.id in self.monitors:
+            if self.type == 'base':
                 topic = 'neighbors/' + nid + '/'
                 self.monitor[nid] = {}
                 self.monitor[nid]['odometry'] = \
@@ -307,7 +303,7 @@ class MultiAgent:
         self.beacon_pub = rospy.Publisher('beacons', BeaconArray, queue_size=10)
 
         # Setup the beacon monitor
-        if self.id in self.monitors:
+        if self.type == 'base':
             self.monitor['beacons'] = rospy.Publisher('mbeacons', Marker, queue_size=10)
             self.mbeacon = Marker()
             self.mbeacon.header.frame_id = 'world'
@@ -366,6 +362,7 @@ class MultiAgent:
         # For now just recording that we received a message
         if self.base.simcomm:
             self.base.lastMessage = rospy.get_rostime()
+            self.base.commBeacons = data
 
     def CommCheck(self):
         # Simply check when the last time we saw a message and set status
@@ -417,6 +414,12 @@ class MultiAgent:
         for neighbor in self.neighbors.values():
             # Make sure our beacon list matches our neighbors'
             for beacon in neighbor.commBeacons.data:
+                if beacon.active and not self.beacons[beacon.id].active:
+                    self.beacons[beacon.id].pos = beacon.pos
+                    self.beacons[beacon.id].active = True
+
+        if self.type != 'base':
+            for beacon in self.base.commBeacons.data:
                 if beacon.active and not self.beacons[beacon.id].active:
                     self.beacons[beacon.id].pos = beacon.pos
                     self.beacons[beacon.id].active = True
@@ -595,7 +598,7 @@ class MultiAgent:
             self.publishBeacons()
 
             # Update the visualization topics
-            if self.id in self.monitors:
+            if self.type == 'base':
                 self.baseArtifacts()
                 self.publishNeighbors()
 
