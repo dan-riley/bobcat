@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from __future__ import print_function
 import math
+import hashlib
 import rospy
 
 from std_msgs.msg import Bool
@@ -16,6 +17,8 @@ from marble_artifact_detection_msgs.msg import ArtifactArray
 from marble_multi_agent.msg import CommsCheckArray
 from marble_multi_agent.msg import Beacon
 from marble_multi_agent.msg import BeaconArray
+from marble_multi_agent.msg import AgentArtifact
+from marble_multi_agent.msg import BaseMonitor
 
 
 class Neighbor(object):
@@ -31,6 +34,7 @@ class Neighbor(object):
         self.commBeacons = BeaconArray()
         self.newArtifacts = ArtifactArray()
         self.lastMessage = rospy.get_rostime()
+        self.lastArtifact = ''
         self.incomm = True
         self.simcomm = True
 
@@ -84,6 +88,7 @@ class Base(object):
 
     def __init__(self):
         self.lastMessage = rospy.get_rostime()
+        self.lastArtifact = ''
         self.incomm = True
         self.simcomm = True
         self.commBeacons = BeaconArray()
@@ -223,6 +228,7 @@ class MultiAgent:
 
         self.neighbors = {}
         self.beacons = {}
+        self.beaconsArray = []
         self.comm_sub = {}
         self.simcomms = {}
         self.commcheck = {}
@@ -252,9 +258,9 @@ class MultiAgent:
             self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
             self.stop_pub = rospy.Publisher(stopTopic, Bool, queue_size=10)
 
-        # Initialize base station
-        self.base = Base()
-        self.base_sub = rospy.Subscriber(baseTopic, BeaconArray, self.BaseMonitor)
+            # Initialize base station
+            self.base = Base()
+            self.base_sub = rospy.Subscriber(baseTopic, BaseMonitor, self.BaseMonitor)
 
         if self.useSimComms:
             self.comm_sub[self.id] = \
@@ -307,8 +313,11 @@ class MultiAgent:
 
         self.beacon_pub = rospy.Publisher('beacons', BeaconArray, queue_size=10)
 
-        # Setup the beacon monitor
+        # Setup the base station monitors
         if self.type == 'base':
+            # The status message for the agents get latest beacons and artifact acknowledgement
+            self.base_pub = rospy.Publisher(baseTopic, BaseMonitor, queue_size=10)
+
             self.monitor['beacons'] = rospy.Publisher('mbeacons', Marker, queue_size=10)
             self.mbeacon = Marker()
             self.mbeacon.header.frame_id = 'world'
@@ -361,13 +370,30 @@ class MultiAgent:
             commBeacon.pos = beacon.pos
             commBeacons.append(commBeacon)
 
-        self.beacon_pub.publish(commBeacons)
+        self.beaconsArray = commBeacons
+        self.beacon_pub.publish(self.beaconsArray)
 
     def BaseMonitor(self, data):
-        # For now just recording that we received a message
+        # Get the beacons from the base, and artifact status
         if self.base.simcomm:
             self.base.lastMessage = rospy.get_rostime()
-            self.base.commBeacons = data
+            self.base.commBeacons.data = data.beacons
+            for agent in data.agents:
+                if agent.id == self.id:
+                    self.base.lastArtifact = agent.lastArtifact
+                    break
+
+    def publishBaseMonitor(self):
+        # Publish the base's beacon list and artifact status of each neighbor
+        msg = BaseMonitor()
+        msg.beacons = self.beaconsArray
+        for neighbor in self.neighbors.values():
+            agent = AgentArtifact()
+            agent.id = neighbor.id
+            agent.lastArtifact = neighbor.lastArtifact
+            msg.agents.append(agent)
+
+        self.base_pub.publish(msg)
 
     def CommCheck(self):
         # Simply check when the last time we saw a message and set status
@@ -375,7 +401,8 @@ class MultiAgent:
             neighbor.incomm = neighbor.lastMessage > rospy.get_rostime() - self.commThreshold
 
         # Same with base station
-        self.base.incomm = self.base.lastMessage > rospy.get_rostime() - self.commThreshold
+        if self.type == 'robot':
+            self.base.incomm = self.base.lastMessage > rospy.get_rostime() - self.commThreshold
 
     # Next 3 functions are just for simulated comms.  Otherwise simcomm is True.
     def simCommChecker(self, data, nid):
@@ -572,6 +599,9 @@ class MultiAgent:
                         self.artifacts[artifact_id] = ArtifactReport(artifact, artifact_id)
                         print(self.id, 'new artifact', artifact_id)
 
+                artifactString = repr(neighbor.newArtifacts.artifacts).encode('utf-8')
+                neighbor.lastArtifact = hashlib.md5(artifactString).hexdigest()
+
     def artifactCheck(self):
         # Check the artifact list received from the artifact manager for new artifacts
         for artifact in self.agent.newArtifacts.artifacts:
@@ -590,6 +620,11 @@ class MultiAgent:
                     self.report = True
                     break
 
+        # Identify our report so we can track that the base station has seen it
+        if self.report:
+            artifactString = repr(self.agent.newArtifacts.artifacts).encode('utf-8')
+            self.agent.lastArtifact = hashlib.md5(artifactString).hexdigest()
+
     def start(self):
         # Wait to start running anything until we've gotten some data and can confirm comms
         # This should also help to recover any beacons being published by other nodes
@@ -606,9 +641,10 @@ class MultiAgent:
             self.updateBeacons()
             self.publishBeacons()
 
-            # Update the visualization topics
+            # Update the visualization topics and base station status
             if self.type == 'base':
                 self.baseArtifacts()
+                self.publishBaseMonitor()
                 self.publishNeighbors()
 
             # Non-robot nodes don't need to do the following
@@ -620,9 +656,8 @@ class MultiAgent:
 
                 # Change the goal to go home to report
                 if self.report:
-                    # If we're in comms, assume the current list is reported
-                    # Eventually may want to add a confirmation from base
-                    if self.base.incomm:
+                    # Once we see the base has our latest artifact report we can stop going home
+                    if self.base.lastArtifact == self.agent.lastArtifact:
                         self.report = False
                         self.task_pub.publish('Explore')
                         for artifact in self.artifacts.values():

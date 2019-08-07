@@ -14,6 +14,8 @@ add_message_files(
   CommsCheckArray.msg
   Beacon.msg
   BeaconArray.msg
+  AgentArtifact.msg
+  BaseMonitor.msg
 )
 
 generate_messages(

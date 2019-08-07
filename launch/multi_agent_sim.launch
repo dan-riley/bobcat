@@ -25,7 +25,7 @@
   <!-- List of all potentially deployed neighbors.  Determines what topics are subscribed. -->
   <arg name="potentialNeighbors" default="X1,X2" />
   <!-- Topic to monitor from base station to ensure we're in comm -->
-  <arg name="baseTopic" default="/Anchor/beacons" />
+  <arg name="baseTopic" default="/Anchor/ma_status" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
   <arg name="stopTopic" default="stop_for_beacon_drop" />
   <arg name="odomTopic" default="odometry" />
