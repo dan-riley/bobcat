@@ -8,6 +8,8 @@
   <arg name="rate" default="1" />
   <!-- Whether to use simulated comms -->
   <arg name="simcomms" default="true" />
+  <!-- Whether to run the agent solo (simulates always in comm with base) -->
+  <arg name="solo" default="false" />
   <!-- How long without a message to consider 'lost comms' -->
   <arg name="commThreshold" default="2" />
   <!-- How far to drive from the anchor before automatically dropping a beacon -->
@@ -44,6 +46,7 @@
     <param name="type" value="$(arg type)" />
     <param name="rate" value="$(arg rate)" />
     <param name="simcomms" value="$(arg simcomms)" />
+    <param name="solo" value="$(arg solo)" />
     <param name="commThreshold" value="$(arg commThreshold)" />
     <param name="anchorDropDist" value="$(arg anchorDropDist)" />
     <param name="dropDist" value="$(arg dropDist)" />

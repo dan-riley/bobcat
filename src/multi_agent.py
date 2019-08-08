@@ -163,7 +163,13 @@ def getYaw(orientation):
     y = orientation.y
     z = orientation.z
     w = orientation.w
-    return math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
+    yaw = math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
+
+    # Account for the negative values which mess up averages
+    if yaw < 0:
+        yaw = 2 * math.pi + yaw
+
+    return yaw
 
 
 def averagePose(history):
@@ -194,6 +200,8 @@ class MultiAgent:
         self.rate = rospy.get_param('multi_agent/rate', 1)
         # Whether to use simulated comms or real comms
         self.useSimComms = rospy.get_param('multi_agent/simcomms', False)
+        # Whether to run the agent without a base station (comms always true)
+        self.solo = rospy.get_param('multi_agent/solo', False)
         # Time without message for lost comm
         self.commThreshold = rospy.Duration(rospy.get_param('multi_agent/commThreshold', False), 2)
         # Distance from Anchor to drop beacons automatically
@@ -401,7 +409,7 @@ class MultiAgent:
             neighbor.incomm = neighbor.lastMessage > rospy.get_rostime() - self.commThreshold
 
         # Same with base station
-        if self.type == 'robot':
+        if self.type == 'robot' and not self.solo:
             self.base.incomm = self.base.lastMessage > rospy.get_rostime() - self.commThreshold
 
     # Next 3 functions are just for simulated comms.  Otherwise simcomm is True.
@@ -456,7 +464,7 @@ class MultiAgent:
                     self.beacons[beacon.id].pos = beacon.pos
                     self.beacons[beacon.id].active = True
 
-    def deployBeacon(self, inplace):
+    def deployBeacon(self, inplace, dropReason):
         deploy = False
         # Find the first available beacon for this agent
         for beacon in self.beacons.values():
@@ -493,7 +501,7 @@ class MultiAgent:
                 state.model_name = deploy
                 state.pose = pose
 
-            print(self.id, "deploying beacon", deploy)
+            print(self.id, 'deploying beacon', deploy, 'for', dropReason)
             try:
                 if self.useSimComms:
                     # Drop the simulated beacon, and pause to simulate drop
@@ -527,6 +535,7 @@ class MultiAgent:
             numBeacons = 0
             numDistBeacons = 0
             dropBeacon = False
+            dropReason = ''
 
             # We're connected to the mesh, either through anchor or beacon(s)
             if self.base.incomm:
@@ -535,23 +544,24 @@ class MultiAgent:
 
                 # Once we pass the maxDist we could set a flag so we don't keep recalculating this
                 anchorDist = getDist(pose.position, self.anchorPos)
-                # If we have different ranges for anchor-beacon and beacon-beacon, change this
-                checkDist = self.maxDist
+                # Beacon distance based drop only kicks in once out of anchor range
+                checkDist = self.maxAnchorDist
 
                 # If we're too close (like for the initial node drop), never drop a beacon
                 if anchorDist < self.minAnchorDist:
                     return
 
-                # Distance based drop only kicks in once out of anchor range
                 # If we're at end of anchor range, drop beacon
                 if anchorDist > self.maxAnchorDist:
                     dropBeacon = True
+                    dropReason = 'anchor distance'
                     checkDist = self.maxDist
 
                 # Always drop a beacon if we're at a node and we're in comm
                 # If beacons are strong enough may want to restrict distance
                 if self.agent.atnode.data:
                     dropBeacon = True
+                    dropReason = 'at junction'
                     checkDist = self.junctionDist
                 # Check if it looks like we're going around a corner
                 elif self.turnDetect and len(self.history) == self.hislen:
@@ -563,6 +573,7 @@ class MultiAgent:
                     if (getDist(pos1, pos2) > 4 and abs(yaw2 - yaw1) > 0.5 and
                             getDist(self.history[-2].position, self.history[-1].position) > 0.5):
                         dropBeacon = True
+                        dropReason = 'at turn'
                         checkDist = self.junctionDist + 5
 
                 for beacon in self.beacons.values():
@@ -575,13 +586,15 @@ class MultiAgent:
                         if dist > checkDist:
                             numDistBeacons = numDistBeacons + 1
                             dropBeacon = True
+                            if dropReason == '' or dropReason == 'anchor distance':
+                                dropReason = 'beacon distance'
 
                 # Cancel the drop if we have more than one beacon in range
                 if numBeacons - numDistBeacons > 0:
                     dropBeacon = False
 
                 if dropBeacon:
-                    self.deployBeacon(True)
+                    self.deployBeacon(True, dropReason)
             else:
                 # If we're not talking to the base station, attempt to reverse drop
                 # self.deployBeacon(False)
@@ -657,7 +670,7 @@ class MultiAgent:
                 # Change the goal to go home to report
                 if self.report:
                     # Once we see the base has our latest artifact report we can stop going home
-                    if self.base.lastArtifact == self.agent.lastArtifact:
+                    if self.solo or self.base.lastArtifact == self.agent.lastArtifact:
                         self.report = False
                         self.task_pub.publish('Explore')
                         for artifact in self.artifacts.values():
