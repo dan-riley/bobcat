@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 from __future__ import print_function
+from cmath import rect, phase
 import math
 import hashlib
 import rospy
@@ -163,13 +164,7 @@ def getYaw(orientation):
     y = orientation.y
     z = orientation.z
     w = orientation.w
-    yaw = math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
-
-    # Account for the negative values which mess up averages
-    if yaw < 0:
-        yaw = 2 * math.pi + yaw
-
-    return yaw
+    return math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
 
 
 def averagePose(history):
@@ -179,14 +174,24 @@ def averagePose(history):
         pos.x = pos.x + pose.position.x
         pos.y = pos.y + pose.position.y
         pos.z = pos.z + pose.position.z
-        yaw = yaw + getYaw(pose.orientation)
+        yaw = yaw + rect(1, getYaw(pose.orientation))
 
     pos.x = pos.x / float(len(history))
     pos.y = pos.y / float(len(history))
     pos.z = pos.z / float(len(history))
-    yaw = yaw / float(len(history))
+    yaw = math.degrees(phase(yaw))
 
     return pos, yaw
+
+
+def angleDiff(a, b):
+    # Computes a-b, preserving the correct sign (counter-clockwise positive angles)
+    # All angles are in degrees
+    a = (360000 + a) % 360
+    b = (360000 + b) % 360
+    d = a - b
+    d = (d + 180) % 360 - 180
+    return d
 
 
 class MultiAgent:
@@ -212,6 +217,8 @@ class MultiAgent:
         self.junctionDist = rospy.get_param('multi_agent/junctionDist', 10)
         # Whether to use turn detection to drop beacons
         self.turnDetect = rospy.get_param('multi_agent/turnDetect', True)
+        # Whether this agent should delay their drop so the trailing robot can
+        self.delayDrop = rospy.get_param('multi_agent/delayDrop', False)
         # Number of beacons this robot is carrying
         self.numBeacons = rospy.get_param('multi_agent/numBeacons', 20)
         # Total number of potential beacons
@@ -552,7 +559,7 @@ class MultiAgent:
                     return
 
                 # If we're at end of anchor range, drop beacon
-                if anchorDist > self.maxAnchorDist:
+                if anchorDist > self.maxAnchorDist and not self.delayDrop:
                     dropBeacon = True
                     dropReason = 'anchor distance'
                     checkDist = self.maxDist
@@ -570,7 +577,7 @@ class MultiAgent:
 
                     # Check that we've turned and moved far enough, over history and last second
                     # Will need to retune these for real vehicle dynamics
-                    if (getDist(pos1, pos2) > 4 and abs(yaw2 - yaw1) > 0.5 and
+                    if (getDist(pos1, pos2) > 4 and abs(angleDiff(yaw1, yaw2)) > 30 and
                             getDist(self.history[-2].position, self.history[-1].position) > 0.5):
                         dropBeacon = True
                         dropReason = 'at turn'
@@ -594,7 +601,10 @@ class MultiAgent:
                     dropBeacon = False
 
                 if dropBeacon:
-                    self.deployBeacon(True, dropReason)
+                    if self.delayDrop:
+                        self.delayDrop = False
+                    else:
+                        self.deployBeacon(True, dropReason)
             else:
                 # If we're not talking to the base station, attempt to reverse drop
                 # self.deployBeacon(False)
