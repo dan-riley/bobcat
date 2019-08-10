@@ -2,6 +2,7 @@
 <launch>
   <!-- Vehicle name for namespace and topic id -->
   <arg name="vehicle" default="X1" />
+  <arg name="ns" default="$(arg vehicle)" />
   <!-- Type of node.  Current options are 'robot' and 'base' -->
   <arg name="type" default="robot" />
   <!-- Rate to run the node at -->
@@ -32,9 +33,10 @@
   <arg name="baseTopic" default="/Anchor/ma_status" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
   <arg name="stopTopic" default="stop_for_beacon_drop" />
+  <arg name="waitTopic" default="origin_detected" />
   <arg name="odomTopic" default="odometry" />
   <arg name="goalTopic" default="node_skeleton/next_turn_pose" />
-  <arg name="mapTopic" default="occupied_cells_vis_array" />
+  <arg name="mapTopic" default="octomap_binary" />
   <arg name="nodeTopic" default="at_a_node" />
   <arg name="artifactsTopic" default="artifact_array" />
   <!-- Approximate location of anchor node, for first beacon drop distance calc -->
@@ -42,7 +44,7 @@
   <arg name="anchorY" default="0.0" />
   <arg name="anchorZ" default="0.1" />
 
-  <node ns="$(arg vehicle)" pkg="marble_multi_agent" type="multi_agent.py" name="multi_agent" output="screen">
+  <node ns="$(arg ns)" pkg="marble_multi_agent" type="multi_agent.py" name="multi_agent" output="screen">
     <!-- Parameters -->
     <param name="vehicle" value="$(arg vehicle)" />
     <param name="type" value="$(arg type)" />
@@ -60,6 +62,7 @@
     <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
     <param name="baseTopic" value="$(arg baseTopic)" />
     <param name="stopTopic" value="$(arg stopTopic)" />
+    <param name="waitTopic" value="$(arg waitTopic)" />
     <param name="odomTopic" value="$(arg odomTopic)" />
     <param name="goalTopic" value="$(arg goalTopic)" />
     <param name="mapTopic" value="$(arg mapTopic)" />

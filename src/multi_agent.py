@@ -12,6 +12,7 @@ from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
 from visualization_msgs.msg import Marker
 from visualization_msgs.msg import MarkerArray
+from octomap_msgs.msg import Octomap
 from gazebo_msgs.msg import ModelState
 from gazebo_msgs.srv import SetModelState
 from marble_artifact_detection_msgs.msg import ArtifactArray
@@ -31,7 +32,7 @@ class Neighbor(object):
         self.odometry = Odometry()
         self.goal = PoseStamped()
         self.atnode = Bool()
-        self.map = MarkerArray()
+        self.map = Octomap()
         self.commBeacons = BeaconArray()
         self.newArtifacts = ArtifactArray()
         self.lastMessage = rospy.get_rostime()
@@ -121,17 +122,9 @@ class ArtifactReport:
 class DataListener:
     """ Listens to all of the applicable topics and repackages into a single object """
 
-    def __init__(self, agent, agent_type, topics):
+    def __init__(self, agent, agent_type, simcomm, topics):
         self.agent = agent  # Agent or Neighbor object
-        self.odom_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/' + topics['odometry'],
-                             Odometry, self.Receiver, 'odometry', queue_size=1)
-        self.goal_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/' + topics['goal'],
-                             PoseStamped, self.Receiver, 'goal', queue_size=1)
-        self.node_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/' + topics['node'],
-                             Bool, self.Receiver, 'atnode', queue_size=1)
+
         self.beacon_sub = \
             rospy.Subscriber('/' + self.agent.id + '/beacons',
                              BeaconArray, self.Receiver, 'commBeacons', queue_size=1)
@@ -139,10 +132,21 @@ class DataListener:
             rospy.Subscriber('/' + self.agent.id + '/' + topics['artifacts'],
                              ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
 
-        if agent_type == 'base':
+        if agent_type == 'robot' or (agent_type == 'base' and simcomm):
+            self.odom_sub = \
+                rospy.Subscriber('/' + self.agent.id + '/' + topics['odometry'],
+                                 Odometry, self.Receiver, 'odometry', queue_size=1)
+            self.goal_sub = \
+                rospy.Subscriber('/' + self.agent.id + '/' + topics['goal'],
+                                 PoseStamped, self.Receiver, 'goal', queue_size=1)
+            self.node_sub = \
+                rospy.Subscriber('/' + self.agent.id + '/' + topics['node'],
+                                 Bool, self.Receiver, 'atnode', queue_size=1)
+
+        if agent_type == 'base' and simcomm:
             self.map_sub = \
                 rospy.Subscriber('/' + self.agent.id + '/' + topics['map'],
-                                 MarkerArray, self.Receiver, 'map')
+                                 Octomap, self.Receiver, 'map')
 
     def Receiver(self, data, parameter):
         if self.agent.simcomm:
@@ -228,6 +232,7 @@ class MultiAgent:
         # Topics
         baseTopic = rospy.get_param('multi_agent/baseTopic', '/Base/beacons')
         stopTopic = rospy.get_param('multi_agent/stopTopic', 'stop_for_beacon_drop')
+        self.waitTopic = rospy.get_param('multi_agent/waitTopic', 'origin_detected')
         topics = {}
         topics['odometry'] = rospy.get_param('multi_agent/odomTopic', 'odometry')
         topics['goal'] = rospy.get_param('multi_agent/goalTopic', 'node_skeleton/next_turn_pose')
@@ -268,7 +273,7 @@ class MultiAgent:
 
         # Setup the internal listeners if we're a robot
         if self.type == 'robot':
-            DataListener(self.agent, 'robot', topics)
+            DataListener(self.agent, 'robot', self.useSimComms, topics)
             self.task_pub = rospy.Publisher('task', String, queue_size=10)
             self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
             self.stop_pub = rospy.Publisher(stopTopic, Bool, queue_size=10)
@@ -308,7 +313,7 @@ class MultiAgent:
         # Setup the listeners for each neighbor
         for nid in [n for n in neighbors if n != self.id]:
             self.neighbors[nid] = Neighbor(nid)
-            DataListener(self.neighbors[nid], self.type, topics)
+            DataListener(self.neighbors[nid], self.type, self.useSimComms, topics)
 
             if self.useSimComms:
                 comm_topic = '/' + nid + '/commcheck'
@@ -316,7 +321,8 @@ class MultiAgent:
                     rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
 
             # Setup topics for visualization at whichever monitors are specified (usually base)
-            if self.type == 'base':
+            # We don't need to republish everything if we have actual comms and multimaster
+            if self.type == 'base' and self.useSimComms:
                 topic = 'neighbors/' + nid + '/'
                 self.monitor[nid] = {}
                 self.monitor[nid]['odometry'] = \
@@ -324,7 +330,7 @@ class MultiAgent:
                 self.monitor[nid]['goal'] = \
                     rospy.Publisher(topic + 'goal', PoseStamped, queue_size=10)
                 self.monitor[nid]['map'] = \
-                    rospy.Publisher(topic + 'map', MarkerArray, queue_size=10)
+                    rospy.Publisher(topic + 'map', Octomap, queue_size=10)
 
         self.beacon_pub = rospy.Publisher('beacons', BeaconArray, queue_size=10)
 
@@ -346,44 +352,56 @@ class MultiAgent:
             self.mbeacon.color.g = 1.0
             self.mbeacon.color.b = 1.0
 
-            self.monitor['artifacts'] = rospy.Publisher('martifacts', Marker, queue_size=10)
-            self.martifact = Marker()
-            self.martifact.header.frame_id = 'world'
-            self.martifact.type = self.martifact.CUBE_LIST
-            self.martifact.action = self.martifact.ADD
-            self.martifact.scale.x = 0.5
-            self.martifact.scale.y = 0.5
-            self.martifact.scale.z = 0.5
-            self.martifact.color.a = 1.0
-            self.martifact.color.r = 1.0
-            self.martifact.color.g = 0.0
-            self.martifact.color.b = 0.0
+            self.monitor['artifacts'] = rospy.Publisher('martifacts', MarkerArray, queue_size=10)
+            self.martifact = MarkerArray()
+
+    def buildArtifactMarker(self, artifact):
+        martifact = Marker()
+        martifact.header = artifact.artifact.header
+        martifact.header.frame_id = 'world'
+        martifact.id = artifact.artifact.header.seq
+        martifact.type = martifact.TEXT_VIEW_FACING
+        martifact.action = martifact.ADD
+        martifact.scale.x = 1.0
+        martifact.scale.y = 1.0
+        martifact.scale.z = 1.0
+        martifact.color.a = 1.0
+        martifact.color.r = 1.0
+        martifact.color.g = 0.0
+        martifact.color.b = 0.0
+        martifact.pose.position = artifact.artifact.position
+        martifact.text = artifact.artifact.obj_class
+
+        return martifact
 
     def publishNeighbors(self):
         # Topics for visualization at the anchor node
-        for neighbor in self.neighbors.values():
-            self.monitor[neighbor.id]['odometry'].publish(neighbor.odometry)
-            self.monitor[neighbor.id]['goal'].publish(neighbor.goal)
-            self.monitor[neighbor.id]['map'].publish(neighbor.map)
+        if self.useSimComms:
+            for neighbor in self.neighbors.values():
+                self.monitor[neighbor.id]['odometry'].publish(neighbor.odometry)
+                self.monitor[neighbor.id]['goal'].publish(neighbor.goal)
+                self.monitor[neighbor.id]['map'].publish(neighbor.map)
 
         self.mbeacon.points = []
         for beacon in self.beacons.values():
-            self.mbeacon.points.append(beacon.pos)
+            if beacon.active:
+                self.mbeacon.points.append(beacon.pos)
         self.monitor['beacons'].publish(self.mbeacon)
 
-        self.martifact.points = []
+        self.martifact.markers = []
         for artifact in self.artifacts.values():
-            self.martifact.points.append(artifact.artifact.position)
+            self.martifact.markers.append(self.buildArtifactMarker(artifact))
         self.monitor['artifacts'].publish(self.martifact)
 
     def publishBeacons(self):
         commBeacons = []
         for beacon in self.beacons.values():
-            commBeacon = Beacon()
-            commBeacon.id = beacon.id
-            commBeacon.active = beacon.active
-            commBeacon.pos = beacon.pos
-            commBeacons.append(commBeacon)
+            if beacon.active:
+                commBeacon = Beacon()
+                commBeacon.id = beacon.id
+                commBeacon.active = beacon.active
+                commBeacon.pos = beacon.pos
+                commBeacons.append(commBeacon)
 
         self.beaconsArray = commBeacons
         self.beacon_pub.publish(self.beaconsArray)
@@ -620,7 +638,7 @@ class MultiAgent:
                                    str(artifact.position.z))
                     if artifact_id not in self.artifacts:
                         self.artifacts[artifact_id] = ArtifactReport(artifact, artifact_id)
-                        print(self.id, 'new artifact', artifact_id)
+                        print(self.id, 'new artifact', artifact.obj_class, artifact_id)
 
                 artifactString = repr(neighbor.newArtifacts.artifacts).encode('utf-8')
                 neighbor.lastArtifact = hashlib.md5(artifactString).hexdigest()
@@ -634,7 +652,7 @@ class MultiAgent:
             if artifact_id not in self.artifacts:
                 self.artifacts[artifact_id] = ArtifactReport(artifact, artifact_id)
                 self.report = True
-                print(self.id, 'new artifact', artifact_id)
+                print(self.id, 'new artifact', artifact.obj_class, artifact_id)
 
         # If we didn't add anything new, check if any still need reported
         if not self.report:
@@ -652,6 +670,11 @@ class MultiAgent:
         # Wait to start running anything until we've gotten some data and can confirm comms
         # This should also help to recover any beacons being published by other nodes
         rospy.sleep(10)
+
+        # Need to wait for origin detection before we do anything else
+        if not self.useSimComms:
+            rospy.wait_for_message(self.waitTopic, Bool)
+
         rate = rospy.Rate(self.rate)
         while not rospy.is_shutdown():
             if self.useSimComms:
