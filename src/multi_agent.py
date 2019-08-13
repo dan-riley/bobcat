@@ -16,6 +16,7 @@ from octomap_msgs.msg import Octomap
 from gazebo_msgs.msg import ModelState
 from gazebo_msgs.srv import SetModelState
 from marble_artifact_detection_msgs.msg import ArtifactArray
+from marble_origin_detection_msgs.msg import OriginDetectionStatus
 from marble_multi_agent.msg import CommsCheckArray
 from marble_multi_agent.msg import Beacon
 from marble_multi_agent.msg import BeaconArray
@@ -117,6 +118,8 @@ class ArtifactReport:
         self.id = artifact_id
         self.artifact = artifact
         self.reported = False
+        self.new = True
+        self.firstSeen = rospy.get_rostime()
 
 
 class DataListener:
@@ -224,21 +227,22 @@ class MultiAgent:
         # Whether this agent should delay their drop so the trailing robot can
         self.delayDrop = rospy.get_param('multi_agent/delayDrop', False)
         # Number of beacons this robot is carrying
-        self.numBeacons = rospy.get_param('multi_agent/numBeacons', 20)
+        self.numBeacons = rospy.get_param('multi_agent/numBeacons', 16)
         # Total number of potential beacons
-        totalBeacons = rospy.get_param('multi_agent/totalBeacons', 60)
+        totalBeacons = rospy.get_param('multi_agent/totalBeacons', 48)
         # Potential robot neighbors to monitor
-        neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'H01,H02').split(',')
+        neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'H01,H02,H03').split(',')
         # Topics
         baseTopic = rospy.get_param('multi_agent/baseTopic', '/Base/beacons')
         stopTopic = rospy.get_param('multi_agent/stopTopic', 'stop_for_beacon_drop')
-        self.waitTopic = rospy.get_param('multi_agent/waitTopic', 'origin_detected')
+        statusTopic = rospy.get_param('multi_agent/statusTopic', 'task_update')
+        waitTopic = rospy.get_param('multi_agent/waitTopic', 'origin_detection_status')
         topics = {}
         topics['odometry'] = rospy.get_param('multi_agent/odomTopic', 'odometry')
         topics['goal'] = rospy.get_param('multi_agent/goalTopic', 'node_skeleton/next_turn_pose')
-        topics['map'] = rospy.get_param('multi_agent/mapTopic', 'occupied_cells_vis_array')
-        topics['node'] = rospy.get_param('multi_agent/nodeTopic', 'at_a_node')
-        topics['artifacts'] = rospy.get_param('multi_agent/artifactsTopic', 'artifact_array')
+        topics['map'] = rospy.get_param('multi_agent/mapTopic', 'octomap_binary')
+        topics['node'] = rospy.get_param('multi_agent/nodeTopic', 'at_node_center')
+        topics['artifacts'] = rospy.get_param('multi_agent/artifactsTopic', 'artifact_array/relay')
 
         # Static anchor position
         self.anchorPos = Point()
@@ -258,6 +262,8 @@ class MultiAgent:
         self.hislen = self.rate * 10  # How long the odometry history should be
         self.minAnchorDist = 10  # Minimum distance before a beacon is ever dropped
         self.report = False
+        self.status = ''
+        self.wait = True
 
         # Zero out the beacons if this is a base station type
         if self.type == 'base':
@@ -277,6 +283,8 @@ class MultiAgent:
             self.task_pub = rospy.Publisher('task', String, queue_size=10)
             self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
             self.stop_pub = rospy.Publisher(stopTopic, Bool, queue_size=10)
+            self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
+            self.status_sub = rospy.Subscriber(statusTopic, String, self.StatusMonitor)
 
             # Initialize base station
             self.base = Base()
@@ -355,24 +363,41 @@ class MultiAgent:
             self.monitor['artifacts'] = rospy.Publisher('martifacts', MarkerArray, queue_size=10)
             self.martifact = MarkerArray()
 
-    def buildArtifactMarker(self, artifact):
-        martifact = Marker()
-        martifact.header = artifact.artifact.header
-        martifact.header.frame_id = 'world'
-        martifact.id = artifact.artifact.header.seq
-        martifact.type = martifact.TEXT_VIEW_FACING
-        martifact.action = martifact.ADD
-        martifact.scale.x = 1.0
-        martifact.scale.y = 1.0
-        martifact.scale.z = 1.0
-        martifact.color.a = 1.0
-        martifact.color.r = 1.0
-        martifact.color.g = 0.0
-        martifact.color.b = 0.0
-        martifact.pose.position = artifact.artifact.position
-        martifact.text = artifact.artifact.obj_class
+    def buildArtifactMarkers(self):
+        i = 0
+        self.martifact.markers = []
+        for artifact in self.artifacts.values():
 
-        return martifact
+            martifact = Marker()
+            martifact.header = artifact.artifact.header
+            martifact.header.frame_id = 'world'
+            martifact.id = i
+            martifact.type = martifact.TEXT_VIEW_FACING
+            martifact.action = martifact.ADD
+
+            # Highlight new artifacts, and check if it's now old
+            if artifact.new:
+                martifact.scale.x = 10.0
+                martifact.scale.y = 10.0
+                martifact.scale.z = 10.0
+
+                if artifact.firstSeen < rospy.get_rostime() - rospy.Duration(30):
+                    artifact.new = False
+            else:
+                martifact.scale.x = 1.0
+                martifact.scale.y = 1.0
+                martifact.scale.z = 1.0
+
+            martifact.color.a = 1.0
+            martifact.color.r = 1.0
+            martifact.color.g = 1.0
+            martifact.color.b = 1.0
+            martifact.pose.position = artifact.artifact.position
+            martifact.text = artifact.artifact.obj_class
+
+            self.martifact.markers.append(martifact)
+            i = i + 1
+
 
     def publishNeighbors(self):
         # Topics for visualization at the anchor node
@@ -388,9 +413,7 @@ class MultiAgent:
                 self.mbeacon.points.append(beacon.pos)
         self.monitor['beacons'].publish(self.mbeacon)
 
-        self.martifact.markers = []
-        for artifact in self.artifacts.values():
-            self.martifact.markers.append(self.buildArtifactMarker(artifact))
+        self.buildArtifactMarkers()
         self.monitor['artifacts'].publish(self.martifact)
 
     def publishBeacons(self):
@@ -405,6 +428,13 @@ class MultiAgent:
 
         self.beaconsArray = commBeacons
         self.beacon_pub.publish(self.beaconsArray)
+
+    def WaitMonitor(self, data):
+        if data.status > 0:
+            self.wait = False
+
+    def StatusMonitor(self, data):
+        self.status = data.data
 
     def BaseMonitor(self, data):
         # Get the beacons from the base, and artifact status
@@ -638,7 +668,7 @@ class MultiAgent:
                                    str(artifact.position.z))
                     if artifact_id not in self.artifacts:
                         self.artifacts[artifact_id] = ArtifactReport(artifact, artifact_id)
-                        print(self.id, 'new artifact', artifact.obj_class, artifact_id)
+                        print(self.id, 'new artifact from', neighbor.id, artifact.obj_class, artifact_id)
 
                 artifactString = repr(neighbor.newArtifacts.artifacts).encode('utf-8')
                 neighbor.lastArtifact = hashlib.md5(artifactString).hexdigest()
@@ -669,11 +699,11 @@ class MultiAgent:
     def start(self):
         # Wait to start running anything until we've gotten some data and can confirm comms
         # This should also help to recover any beacons being published by other nodes
-        rospy.sleep(10)
-
         # Need to wait for origin detection before we do anything else
-        if not self.useSimComms:
-            rospy.wait_for_message(self.waitTopic, Bool)
+        if self.type == 'robot':
+            rospy.sleep(5)
+            while self.wait:
+                rospy.sleep(1)
 
         rate = rospy.Rate(self.rate)
         while not rospy.is_shutdown():
@@ -704,13 +734,16 @@ class MultiAgent:
                 if self.report:
                     # Once we see the base has our latest artifact report we can stop going home
                     if self.solo or self.base.lastArtifact == self.agent.lastArtifact:
+                        # Only change our task if we set it!
+                        if self.status == 'Report':
+                            self.task_pub.publish('Explore')
+
                         self.report = False
-                        self.task_pub.publish('Explore')
                         for artifact in self.artifacts.values():
                             artifact.reported = True
                     else:
                         print(self.id, 'return to report...')
-                        self.task_pub.publish('Home')
+                        self.task_pub.publish('Report')
 
             rate.sleep()
         return

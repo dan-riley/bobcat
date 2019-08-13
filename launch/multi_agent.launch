@@ -2,7 +2,7 @@
 <launch>
   <!-- Vehicle name for namespace and topic id -->
   <arg name="vehicle" default="$(env ROS_HOSTNAME)" />
-  <arg name="ns" default="" />
+  <arg name="ns" default="/" />
   <!-- Type of node.  Current options are 'robot' and 'base' -->
   <arg name="type" default="robot" />
   <!-- Rate to run the node at -->
@@ -33,7 +33,8 @@
   <arg name="baseTopic" default="/Base/ma_status" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
   <arg name="stopTopic" default="estop" />
-  <arg name="waitTopic" default="origin_detected" />
+  <arg name="statusTopic" default="task_update" />
+  <arg name="waitTopic" default="origin_detection_status" />
   <arg name="odomTopic" default="odometry" />
   <arg name="goalTopic" default="node_skeleton/next_turn_pose" />
   <arg name="mapTopic" default="octomap_binary" />
