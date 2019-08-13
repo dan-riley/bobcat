@@ -2,7 +2,7 @@
 <launch>
   <!-- Vehicle name for namespace and topic id -->
   <arg name="vehicle" default="$(env ROS_HOSTNAME)" />
-  <arg name="ns" default="/" />
+  <arg name="ns" default="/#(arg vehicle)" />
   <!-- Type of node.  Current options are 'robot' and 'base' -->
   <arg name="type" default="robot" />
   <!-- Rate to run the node at -->
