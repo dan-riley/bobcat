@@ -566,7 +566,8 @@ class MultiAgent:
                 else:
                     # Need to monitor a success message or something
                     # For now just sit to simulate a drop
-                    rospy.sleep(10)
+                    # rospy.sleep(10)
+                    pass
 
                 # Resume the mission
                 self.stop_pub.publish(False)
@@ -646,6 +647,12 @@ class MultiAgent:
 
                 # Cancel the drop if we have more than one beacon in range
                 if numBeacons - numDistBeacons > 0:
+                    dropBeacon = False
+
+                # Prevent dropping after returning home after the first beacon drop
+                # TODO look at the angle between anchor and first beacon and calculate positions
+                # This only works for straight departure now
+                if numBeacons > 0 and anchorDist < self.maxAnchorDist and pose.position.y < 1 and pose.position.y > 1:
                     dropBeacon = False
 
                 if dropBeacon:
