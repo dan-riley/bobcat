@@ -233,10 +233,11 @@ class MultiAgent:
         # Potential robot neighbors to monitor
         neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'H01,H02,H03').split(',')
         # Topics
-        baseTopic = rospy.get_param('multi_agent/baseTopic', '/Base/beacons')
+        baseTopic = rospy.get_param('multi_agent/baseTopic', '/Base/ma_status')
         stopTopic = rospy.get_param('multi_agent/stopTopic', 'stop_for_beacon_drop')
         statusTopic = rospy.get_param('multi_agent/statusTopic', 'task_update')
         waitTopic = rospy.get_param('multi_agent/waitTopic', 'origin_detection_status')
+        commTopic = rospy.get_param('multi_agent/commTopic', 'base_comm')
         topics = {}
         topics['odometry'] = rospy.get_param('multi_agent/odomTopic', 'odometry')
         topics['goal'] = rospy.get_param('multi_agent/goalTopic', 'node_skeleton/next_turn_pose')
@@ -283,6 +284,7 @@ class MultiAgent:
             self.task_pub = rospy.Publisher('task', String, queue_size=10)
             self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
             self.stop_pub = rospy.Publisher(stopTopic, Bool, queue_size=10)
+            self.comm_pub = rospy.Publisher(commTopic, Bool, queue_size=10)
             self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
             self.status_sub = rospy.Subscriber(statusTopic, String, self.StatusMonitor)
 
@@ -530,8 +532,6 @@ class MultiAgent:
         if deploy:
             # Stop the robot and publish message to deployment mechanism
             self.stop_pub.publish(True)
-            self.deploy_pub.publish(True)
-
             pose = self.agent.odometry.pose.pose
 
             if self.useSimComms:
@@ -564,9 +564,10 @@ class MultiAgent:
                     rospy.sleep(3)
                     print(ret.status_message)
                 else:
-                    # Need to monitor a success message or something
-                    # For now just sit to simulate a drop
-                    # rospy.sleep(10)
+                    # Wait to stop, send deploy message, then wait for deployment to finish
+                    rospy.sleep(3)
+                    self.deploy_pub.publish(True)
+                    rospy.sleep(10)
                     pass
 
                 # Resume the mission
@@ -732,6 +733,9 @@ class MultiAgent:
 
             # Non-robot nodes don't need to do the following
             if self.type == 'robot':
+                # Update our comm status for anyone who needs it
+                self.comm_pub.publish(self.base.incomm)
+
                 # Check if we need to drop a beacon
                 self.beaconCheck()
                 # Make sure our internal artifact list is up to date, and if we need to report

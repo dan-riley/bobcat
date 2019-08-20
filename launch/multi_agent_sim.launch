@@ -2,7 +2,7 @@
 <launch>
   <!-- Vehicle name for namespace and topic id -->
   <arg name="vehicle" default="X1" />
-  <arg name="ns" default="$(arg vehicle)" />
+  <arg name="ns" default="/$(arg vehicle)" />
   <!-- Type of node.  Current options are 'robot' and 'base' -->
   <arg name="type" default="robot" />
   <!-- Rate to run the node at -->
@@ -33,7 +33,9 @@
   <arg name="baseTopic" default="/Anchor/ma_status" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
   <arg name="stopTopic" default="stop_for_beacon_drop" />
-  <arg name="waitTopic" default="origin_detected" />
+  <arg name="statusTopic" default="task_update" />
+  <arg name="waitTopic" default="origin_detection_status" />
+  <arg name="commTopic" default="base_comm" />
   <arg name="odomTopic" default="odometry" />
   <arg name="goalTopic" default="node_skeleton/next_turn_pose" />
   <arg name="mapTopic" default="octomap_binary" />
@@ -62,7 +64,9 @@
     <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
     <param name="baseTopic" value="$(arg baseTopic)" />
     <param name="stopTopic" value="$(arg stopTopic)" />
+    <param name="stopTopic" value="$(arg stopTopic)" />
     <param name="waitTopic" value="$(arg waitTopic)" />
+    <param name="commTopic" value="$(arg commTopic)" />
     <param name="odomTopic" value="$(arg odomTopic)" />
     <param name="goalTopic" value="$(arg goalTopic)" />
     <param name="mapTopic" value="$(arg mapTopic)" />
