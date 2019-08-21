@@ -36,6 +36,7 @@ class Neighbor(object):
         self.map = Octomap()
         self.commBeacons = BeaconArray()
         self.newArtifacts = ArtifactArray()
+        self.artifacts = {}
         self.lastMessage = rospy.get_rostime()
         self.lastArtifact = ''
         self.incomm = True
@@ -164,6 +165,10 @@ class DataListener:
 
 def getDist(pos1, pos2):
     return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2 + (pos1.z - pos2.z)**2)
+
+
+def getDist2D(pos1, pos2):
+    return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2)
 
 
 def getYaw(orientation):
@@ -565,14 +570,14 @@ class MultiAgent:
                     print(ret.status_message)
                 else:
                     # Wait to stop, send deploy message, then wait for deployment to finish
-                    rospy.sleep(3)
-                    self.deploy_pub.publish(True)
-                    rospy.sleep(10)
+                    # rospy.sleep(3)
+                    # self.deploy_pub.publish(True)
+                    # rospy.sleep(10)
                     pass
 
                 # Resume the mission
                 self.stop_pub.publish(False)
-                self.deploy_pub.publish(False)
+                # self.deploy_pub.publish(False)
 
                 self.numBeacons = self.numBeacons - 1
                 self.beacons[deploy].active = True
@@ -681,19 +686,27 @@ class MultiAgent:
                 artifactString = repr(neighbor.newArtifacts.artifacts).encode('utf-8')
                 neighbor.lastArtifact = hashlib.md5(artifactString).hexdigest()
 
-    def artifactCheck(self):
+    def artifactCheck(self, agent, artifacts):
         # Check the artifact list received from the artifact manager for new artifacts
-        for artifact in self.agent.newArtifacts.artifacts:
+        for artifact in agent.newArtifacts.artifacts:
             artifact_id = (str(artifact.position.x) +
                            str(artifact.position.y) +
                            str(artifact.position.z))
-            if artifact_id not in self.artifacts:
-                self.artifacts[artifact_id] = ArtifactReport(artifact, artifact_id)
-                self.report = True
-                print(self.id, 'new artifact', artifact.obj_class, artifact_id)
+            if artifact_id not in artifacts:
+                artifacts[artifact_id] = ArtifactReport(artifact, artifact_id)
+                print(self.id, 'new artifact from', agent.id, artifact.obj_class, artifact_id)
+                if agent.id == self.id:
+                    ignore = False
+                    for neighbor in self.neighbors.values():
+                        for artifact2 in neighbor.artifacts.values():
+                            if getDist2D(artifact.position, artifact2.artifact.position) < 3:
+                                ignore = True
+
+                    if not ignore:
+                        self.report = True
 
         # If we didn't add anything new, check if any still need reported
-        if not self.report:
+        if not self.report and agent.id == self.id:
             for artifact in self.artifacts.values():
                 if not artifact.reported:
                     self.report = True
@@ -701,6 +714,7 @@ class MultiAgent:
 
         # Identify our report so we can track that the base station has seen it
         if self.report:
+            print('will report...')
             artifactString = repr(self.agent.newArtifacts.artifacts).encode('utf-8')
             self.agent.lastArtifact = hashlib.md5(artifactString).hexdigest()
 
@@ -738,8 +752,13 @@ class MultiAgent:
 
                 # Check if we need to drop a beacon
                 self.beaconCheck()
+
+                # Get our neighbors' artifacts so we can deconflict reporting
+                for neighbor in self.neighbors.values():
+                    self.artifactCheck(neighbor, neighbor.artifacts)
+
                 # Make sure our internal artifact list is up to date, and if we need to report
-                self.artifactCheck()
+                self.artifactCheck(self.agent, self.artifacts)
 
                 # Change the goal to go home to report
                 if self.report:
