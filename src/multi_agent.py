@@ -571,9 +571,8 @@ class MultiAgent:
                 else:
                     # Wait to stop, send deploy message, then wait for deployment to finish
                     # rospy.sleep(3)
-                    # self.deploy_pub.publish(True)
+                    self.deploy_pub.publish(True)
                     # rospy.sleep(10)
-                    pass
 
                 # Resume the mission
                 self.stop_pub.publish(False)
@@ -705,8 +704,9 @@ class MultiAgent:
                     if not ignore:
                         self.report = True
 
+    def artifactCheckReport(self):
         # If we didn't add anything new, check if any still need reported
-        if not self.report and agent.id == self.id:
+        if not self.report:
             for artifact in self.artifacts.values():
                 if not artifact.reported:
                     self.report = True
@@ -759,6 +759,7 @@ class MultiAgent:
 
                 # Make sure our internal artifact list is up to date, and if we need to report
                 self.artifactCheck(self.agent, self.artifacts)
+                self.artifactCheckReport()
 
                 # Change the goal to go home to report
                 if self.report:
