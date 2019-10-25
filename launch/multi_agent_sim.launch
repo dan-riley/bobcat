@@ -14,7 +14,7 @@
   <!-- How long without a message to consider 'lost comms' -->
   <arg name="commThreshold" default="2" />
   <!-- How far to drive from the anchor before automatically dropping a beacon -->
-  <arg name="anchorDropDist" default="50" />
+  <arg name="anchorDropDist" default="30" />
   <!-- How far to drive before automatically dropping a beacon -->
   <arg name="dropDist" default="25" />
   <!-- Minimum distance between nodes before dropping another beacon -->
@@ -63,7 +63,6 @@
     <param name="totalBeacons" value="$(arg totalBeacons)" />
     <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
     <param name="baseTopic" value="$(arg baseTopic)" />
-    <param name="stopTopic" value="$(arg stopTopic)" />
     <param name="stopTopic" value="$(arg stopTopic)" />
     <param name="waitTopic" value="$(arg waitTopic)" />
     <param name="commTopic" value="$(arg commTopic)" />

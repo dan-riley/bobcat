@@ -5,7 +5,10 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   std_msgs
   geometry_msgs
+  nav_msgs
+  octomap_msgs
   message_generation
+  marble_artifact_detection_msgs
 )
 
 add_message_files(
@@ -16,12 +19,17 @@ add_message_files(
   BeaconArray.msg
   AgentArtifact.msg
   BaseMonitor.msg
+  AgentMsg.msg
+  NeighborMsg.msg
 )
 
 generate_messages(
   DEPENDENCIES
   std_msgs
   geometry_msgs
+  nav_msgs
+  octomap_msgs
+  marble_artifact_detection_msgs
 )
 
 catkin_package(

@@ -2,6 +2,7 @@
 from __future__ import print_function
 from cmath import rect, phase
 import math
+import copy
 import hashlib
 import rospy
 
@@ -17,6 +18,8 @@ from gazebo_msgs.msg import ModelState
 from gazebo_msgs.srv import SetModelState
 from marble_artifact_detection_msgs.msg import ArtifactArray
 from marble_origin_detection_msgs.msg import OriginDetectionStatus
+from marble_multi_agent.msg import AgentMsg
+from marble_multi_agent.msg import NeighborMsg
 from marble_multi_agent.msg import CommsCheckArray
 from marble_multi_agent.msg import Beacon
 from marble_multi_agent.msg import BeaconArray
@@ -27,9 +30,10 @@ from marble_multi_agent.msg import BaseMonitor
 class Neighbor(object):
     """ Data structure to hold pertinent information about other agents """
 
-    def __init__(self, agent_id):
+    def __init__(self, agent_id, parent_id):
         self.id = agent_id
-        self.cid = String()
+        self.pid = parent_id
+        self.cid = ''
         self.odometry = Odometry()
         self.goal = PoseStamped()
         self.atnode = Bool()
@@ -59,12 +63,14 @@ class Neighbor(object):
 
         # Update parameters depending on if we're talking directly or not
         if updater:
+            self.commBeacons = neighbor.commBeacons
+            self.newArtifacts = neighbor.newArtifacts
             self.cid = updater
             self.lastMessage = rospy.get_rostime()
             self.incomm = True
         else:
             self.cid = neighbor.cid
-            self.lastMessage = neighbor.lastMessage
+            self.lastMessage = neighbor.lastMessage.data
             self.incomm = False
 
     # def update(self, pos, goal, goalType, cost):
@@ -79,11 +85,13 @@ class Neighbor(object):
     #     self.path = path
 
 
+# TODO I don't think we need this anymore, as we're using a separate neighbors array anyway
+# Should probably change the Neighbor class to Agent and remove this
 class Agent(Neighbor):
     """ Sub-class for an individual agent, with an array of neighbors to pass data """
 
     def __init__(self, agent_id):
-        super(Agent, self).__init__(agent_id)
+        super(Agent, self).__init__(agent_id, agent_id)
         self.neighbors = {}
 
 
@@ -106,7 +114,7 @@ class BeaconObj(object):
         self.owner = owner
         self.pos = Point()
         self.simcomm = True
-        self.active = False
+        self.active = True
 
 
 class ArtifactReport:
@@ -129,12 +137,12 @@ class DataListener:
     def __init__(self, agent, agent_type, simcomm, topics):
         self.agent = agent  # Agent or Neighbor object
 
-        self.beacon_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/beacons',
-                             BeaconArray, self.Receiver, 'commBeacons', queue_size=1)
-        self.artifact_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/' + topics['artifacts'],
-                             ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
+        # self.beacon_sub = \
+        #     rospy.Subscriber('/' + self.agent.id + '/beacons',
+        #                      BeaconArray, self.Receiver, 'commBeacons', queue_size=1)
+        # self.artifact_sub = \
+        #     rospy.Subscriber('/' + self.agent.id + '/' + topics['artifacts'],
+        #                      ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
 
         if agent_type == 'robot' or (agent_type == 'base' and simcomm):
             self.odom_sub = \
@@ -146,13 +154,12 @@ class DataListener:
             self.node_sub = \
                 rospy.Subscriber('/' + self.agent.id + '/' + topics['node'],
                                  Bool, self.Receiver, 'atnode', queue_size=1)
-
-        if agent_type == 'base' and simcomm:
             self.map_sub = \
                 rospy.Subscriber('/' + self.agent.id + '/' + topics['map'],
                                  Octomap, self.Receiver, 'map')
 
     def Receiver(self, data, parameter):
+        # TODO won't need the simcomm check if we're only subscribed to our internal data. ^^^
         if self.agent.simcomm:
             setattr(self.agent, parameter, data)
             self.agent.lastMessage = rospy.get_rostime()
@@ -238,6 +245,8 @@ class MultiAgent:
         # Potential robot neighbors to monitor
         neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'H01,H02,H03').split(',')
         # Topics
+        pubLowTopic = rospy.get_param('multi_agent/pubLowTopic', 'low_data')
+        pubHighTopic = rospy.get_param('multi_agent/pubHighTopic', 'high_data')
         baseTopic = rospy.get_param('multi_agent/baseTopic', '/Base/ma_status')
         stopTopic = rospy.get_param('multi_agent/stopTopic', 'stop_for_beacon_drop')
         statusTopic = rospy.get_param('multi_agent/statusTopic', 'task_update')
@@ -259,6 +268,8 @@ class MultiAgent:
         self.neighbors = {}
         self.beacons = {}
         self.beaconsArray = []
+        self.low_sub = {}
+        self.high_sub = {}
         self.comm_sub = {}
         self.simcomms = {}
         self.commcheck = {}
@@ -293,6 +304,10 @@ class MultiAgent:
             self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
             self.status_sub = rospy.Subscriber(statusTopic, String, self.StatusMonitor)
 
+        if self.type == 'beacon':
+            self.beacon = BeaconObj(self.id, self.id)
+
+        if self.type != 'base':
             # Initialize base station
             self.base = Base()
             self.base_sub = rospy.Subscriber(baseTopic, BaseMonitor, self.BaseMonitor)
@@ -303,32 +318,15 @@ class MultiAgent:
             self.comm_sub[self.id] = \
                 rospy.Subscriber('/Anchor/commcheck', CommsCheckArray, self.simCommChecker, 'Anchor')
 
-        # Get our 'number id' for beacon assignment
-        if self.type == 'robot':
-            try:
-                sid = int(self.id[-2:])
-            except ValueError:
-                sid = int(self.id[-1])
-        else:
-            sid = 0
-
-        # Setup the beacons.  For real robots the names shouldn't matter as long as consistent
-        for i in range(1, totalBeacons + 1):
-            nid = 'B' + str(i)
-
-            # Determine if this agent 'owns' the beacon so we don't have conflicting names
-            owner = i <= sid * self.numBeacons and i > (sid - 1) * self.numBeacons
-
-            self.beacons[nid] = BeaconObj(nid, owner)
-            if self.useSimComms:
-                comm_topic = '/' + nid + '/commcheck'
-                self.comm_sub[nid] = \
-                    rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
-
         # Setup the listeners for each neighbor
         for nid in [n for n in neighbors if n != self.id]:
-            self.neighbors[nid] = Neighbor(nid)
-            DataListener(self.neighbors[nid], self.type, self.useSimComms, topics)
+            self.neighbors[nid] = Neighbor(nid, self.id)
+
+            # Subscribers for the packaged data
+            subLowTopic = '/' + nid + '/' + pubLowTopic
+            subHighTopic = '/' + nid + '/' + pubHighTopic
+            self.low_sub[nid] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
+            self.high_sub[nid] = rospy.Subscriber(subHighTopic, AgentMsg, self.CommReceiver)
 
             if self.useSimComms:
                 comm_topic = '/' + nid + '/commcheck'
@@ -347,6 +345,40 @@ class MultiAgent:
                 self.monitor[nid]['map'] = \
                     rospy.Publisher(topic + 'map', Octomap, queue_size=10)
 
+        # Get our 'number id' for beacon assignment
+        if self.type == 'robot':
+            try:
+                sid = int(self.id[-2:])
+            except ValueError:
+                sid = int(self.id[-1])
+        else:
+            sid = 0
+
+        # Setup the beacons.  For real robots the names shouldn't matter as long as consistent
+        for i in range(1, totalBeacons + 1):
+            nid = 'B' + str(i)
+
+            # Determine if this agent 'owns' the beacon so we don't have conflicting names
+            owner = i <= sid * self.numBeacons and i > (sid - 1) * self.numBeacons
+
+            self.beacons[nid] = BeaconObj(nid, owner)
+
+            # Subscribers for the packaged data
+            subLowTopic = '/' + nid + '/' + pubLowTopic
+            subHighTopic = '/' + nid + '/' + pubHighTopic
+            self.low_sub[nid] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
+            self.high_sub[nid] = rospy.Subscriber(subHighTopic, AgentMsg, self.CommReceiver)
+
+            if self.useSimComms:
+                comm_topic = '/' + nid + '/commcheck'
+                self.comm_sub[nid] = \
+                    rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
+
+        # Publishers for the packaged data.  If we need to use custom publishers for each
+        # neighbor we're talking to, then this has to moved above in the neighbor loop
+        self.low_pub = rospy.Publisher(pubLowTopic, AgentMsg, queue_size=10)
+        self.high_pub = rospy.Publisher(pubHighTopic, AgentMsg, queue_size=10)
+        # TODO Don't think this is needed anymore, just put it in the AgentMsg?
         self.beacon_pub = rospy.Publisher('beacons', BeaconArray, queue_size=10)
 
         # Setup the base station monitors
@@ -404,7 +436,6 @@ class MultiAgent:
 
             self.martifact.markers.append(martifact)
             i = i + 1
-
 
     def publishNeighbors(self):
         # Topics for visualization at the anchor node
@@ -465,11 +496,26 @@ class MultiAgent:
 
         self.base_pub.publish(msg)
 
+    def buildAgentMessage(self, msg, agent):
+        msg.id = agent.id
+        msg.cid = agent.cid
+        msg.odometry = agent.odometry
+        msg.goal = agent.goal
+        msg.lastMessage.data = agent.lastMessage
+
+        # TODO Map will get moved to only self once we start merging maps
+        msg.map = agent.map
+        if agent.id == self.id:
+            msg.commBeacons.data = self.beaconsArray
+            # TODO this isn't going to work.  Need to figure it out.
+            msg.newArtifacts = agent.newArtifacts
+
     def CommCheck(self):
         # Simply check when the last time we saw a message and set status
         for neighbor in self.neighbors.values():
             neighbor.incomm = neighbor.lastMessage > rospy.get_rostime() - self.commThreshold
 
+        # TODO Do we need this for beacons?!
         # Same with base station
         if self.type == 'robot' and not self.solo:
             self.base.incomm = self.base.lastMessage > rospy.get_rostime() - self.commThreshold
@@ -485,13 +531,15 @@ class MultiAgent:
             self.commcheck[nid] = data.data
 
     def recurCommCheck(self, cid):
-        for check in self.commcheck[cid]:
-            if check.incomm and check.id != self.id and not self.simcomms[check.id].incomm:
-                self.simcomms[check.id].incomm = True
-                self.recurCommCheck(check.id)
+        if cid in self.commcheck:
+            for check in self.commcheck[cid]:
+                if check.incomm and check.id != self.id and not self.simcomms[check.id].incomm:
+                    self.simcomms[check.id].incomm = True
+                    self.recurCommCheck(check.id)
 
     def simCommCheck(self):
         # Recursively check who can talk to who
+        # TODO removing this enables us to disable comm hopping...might be useful parameter
         for cid in self.commcheck:
             if self.simcomms[cid].incomm:
                 self.recurCommCheck(cid)
@@ -506,6 +554,66 @@ class MultiAgent:
         # Base comms are whatever our status with the anchor is
         if self.simcomms and self.id != 'Anchor':
             self.base.simcomm = self.simcomms['Anchor'].incomm
+
+    def CommReceiver(self, data):
+        # If I'm a beacon, don't do anything!
+        if self.type == 'beacon' and not self.beacon.active:
+            activate = False
+
+            # Check the beacon data to see if we should be active yet
+            # May not want to do this for real beacons, although could help with data rates
+            for beacon in data.commBeacons.data:
+                if beacon.id == self.id:
+                    activate = True
+                    self.beacon.active = True
+                    self.beacon.pos = beacon.pos
+
+            if not activate:
+                return
+
+        # If we're talking to a beacon, we only update it's neighbor array
+        # If we move the Beacons message to the AgentMsg may need to rethink
+        runComm = False
+        if 'B' in data.id:
+            if self.beacons[data.id].simcomm:
+                runComm = True
+                notStart = rospy.get_rostime() > rospy.Time(0)
+
+        elif self.neighbors[data.id].simcomm:
+            runComm = True
+            notStart = self.neighbors[data.id].lastMessage > rospy.Time(0)
+
+            # Load data from our neighbors, and their neighbors
+            self.neighbors[data.id].update(data, self.id)
+            # If it's low bandwidth then the map is empty, so don't overwrite!
+            if len(str(data.map.data)) > 100:
+                self.neighbors[data.id].map = data.map
+
+        if runComm:
+            # TODO Right now all maps are being sent, even if it's your own.  Can optimize.
+            # But, if we just merge before sending, we only need to send one map in the first place.
+            # So need to see if that's going to happen before optimizing this
+            # We could break the neighbors into multiple publishers so the other agents subscribe
+            # to everyone who are not themselves.  That would be more efficient than creating
+            # pairs of pubs/subs for each pair!
+
+            # Get our neighbor's neighbors' data and update our own neighbor list
+            for neighbor2 in data.neighbors:
+                # Make sure the neighbor isn't ourself, it's not a stale message,
+                # and we've already talked directly to the neighbor in the last N seconds
+                if neighbor2.id != self.id:
+                    hasMap = len(str(neighbor2.map.data)) > 100
+                    # TODO need to look at what timestamp we should be looking at for neighbor2
+                    # May have just been a problem from restarting mid course
+                    newerMessage = (neighbor2.lastMessage.data >
+                                    self.neighbors[neighbor2.id].lastMessage + rospy.Duration(5))
+                    notDirectComm = self.neighbors[neighbor2.id].cid != self.id
+                    incomm = self.neighbors[neighbor2.id].incomm
+
+                    if (notStart and (newerMessage and (notDirectComm or not incomm))):
+                        self.neighbors[neighbor2.id].update(neighbor2)
+                        if hasMap:
+                            self.neighbors[neighbor2.id].map = neighbor2.map
 
     def updateHistory(self):
         self.history.append(self.agent.odometry.pose.pose)
@@ -663,8 +771,8 @@ class MultiAgent:
                 if dropBeacon:
                     if self.delayDrop:
                         self.delayDrop = False
-                    else:
-                        self.deployBeacon(True, dropReason)
+                    # else:
+                    #     self.deployBeacon(True, dropReason)
             else:
                 # If we're not talking to the base station, attempt to reverse drop
                 # self.deployBeacon(False)
@@ -722,7 +830,7 @@ class MultiAgent:
         # Wait to start running anything until we've gotten some data and can confirm comms
         # This should also help to recover any beacons being published by other nodes
         # Need to wait for origin detection before we do anything else
-        if self.type == 'robot':
+        if self.type == 'robot' and not self.useSimComms:
             rospy.sleep(5)
             while self.wait:
                 rospy.sleep(1)
@@ -775,6 +883,29 @@ class MultiAgent:
                     else:
                         print(self.id, 'return to report...')
                         self.task_pub.publish('Report')
+
+            # If I'm a beacon, don't publish anything!  But keep listening for activate message.
+            if self.type == 'beacon' and not self.beacon.active:
+                rate.sleep()
+                continue
+
+            # Publish our data!  Publishing both low and high bandwidth so low doesn't depend
+            # on the high bandwidth getting through
+            pubDataHigh = AgentMsg()
+            self.buildAgentMessage(pubDataHigh, self.agent)
+            for neighbor in self.neighbors.values():
+                msg = NeighborMsg()
+                self.buildAgentMessage(msg, neighbor)
+                pubDataHigh.neighbors.append(msg)
+
+            # Remove the maps from low bandwidth.  May consider removing other data as well.
+            pubDataLow = copy.deepcopy(pubDataHigh)
+            pubDataLow.map.data = ''
+            for neighbor in pubDataLow.neighbors:
+                neighbor.map.data = ''
+
+            self.low_pub.publish(pubDataLow)
+            self.high_pub.publish(pubDataHigh)
 
             rate.sleep()
         return
