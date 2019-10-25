@@ -114,7 +114,7 @@ class BeaconObj(object):
         self.owner = owner
         self.pos = Point()
         self.simcomm = True
-        self.active = True
+        self.active = False
 
 
 class ArtifactReport:
@@ -771,8 +771,8 @@ class MultiAgent:
                 if dropBeacon:
                     if self.delayDrop:
                         self.delayDrop = False
-                    # else:
-                    #     self.deployBeacon(True, dropReason)
+                    else:
+                        self.deployBeacon(True, dropReason)
             else:
                 # If we're not talking to the base station, attempt to reverse drop
                 # self.deployBeacon(False)
