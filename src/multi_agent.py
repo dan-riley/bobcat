@@ -61,6 +61,10 @@ class Neighbor(object):
         self.odometry = neighbor.odometry
         self.goal = neighbor.goal
 
+        # Update the map if it's not empty (ie, high bandwidth message)
+        if len(str(neighbor.map.data)) > 100:
+            self.map = neighbor.map
+
         # Update parameters depending on if we're talking directly or not
         if updater:
             self.commBeacons = neighbor.commBeacons
@@ -140,9 +144,9 @@ class DataListener:
         # self.beacon_sub = \
         #     rospy.Subscriber('/' + self.agent.id + '/beacons',
         #                      BeaconArray, self.Receiver, 'commBeacons', queue_size=1)
-        # self.artifact_sub = \
-        #     rospy.Subscriber('/' + self.agent.id + '/' + topics['artifacts'],
-        #                      ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
+        self.artifact_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/' + topics['artifacts'],
+                             ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
 
         if agent_type == 'robot' or (agent_type == 'base' and simcomm):
             self.odom_sub = \
@@ -222,6 +226,8 @@ class MultiAgent:
         self.type = rospy.get_param('multi_agent/type', 'robot')
         # Rate to run the node at
         self.rate = rospy.get_param('multi_agent/rate', 1)
+        # Whether to republish neighbor data for visualization or other uses
+        self.monitor = rospy.get_param('multi_agent/monitor', False)
         # Whether to use simulated comms or real comms
         self.useSimComms = rospy.get_param('multi_agent/simcomms', False)
         # Whether to run the agent without a base station (comms always true)
@@ -325,7 +331,7 @@ class MultiAgent:
             # Subscribers for the packaged data
             subLowTopic = '/' + nid + '/' + pubLowTopic
             subHighTopic = '/' + nid + '/' + pubHighTopic
-            self.low_sub[nid] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
+            # self.low_sub[nid] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
             self.high_sub[nid] = rospy.Subscriber(subHighTopic, AgentMsg, self.CommReceiver)
 
             if self.useSimComms:
@@ -333,9 +339,8 @@ class MultiAgent:
                 self.comm_sub[nid] = \
                     rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
 
-            # Setup topics for visualization at whichever monitors are specified (usually base)
-            # We don't need to republish everything if we have actual comms and multimaster
-            if self.type == 'base' and self.useSimComms:
+            # Setup topics for visualization at whichever monitors are specified (always base)
+            if self.monitor or self.type == 'base':
                 topic = 'neighbors/' + nid + '/'
                 self.monitor[nid] = {}
                 self.monitor[nid]['odometry'] = \
@@ -366,7 +371,7 @@ class MultiAgent:
             # Subscribers for the packaged data
             subLowTopic = '/' + nid + '/' + pubLowTopic
             subHighTopic = '/' + nid + '/' + pubHighTopic
-            self.low_sub[nid] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
+            # self.low_sub[nid] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
             self.high_sub[nid] = rospy.Subscriber(subHighTopic, AgentMsg, self.CommReceiver)
 
             if self.useSimComms:
@@ -376,10 +381,10 @@ class MultiAgent:
 
         # Publishers for the packaged data.  If we need to use custom publishers for each
         # neighbor we're talking to, then this has to moved above in the neighbor loop
-        self.low_pub = rospy.Publisher(pubLowTopic, AgentMsg, queue_size=10)
-        self.high_pub = rospy.Publisher(pubHighTopic, AgentMsg, queue_size=10)
+        self.low_pub = rospy.Publisher(pubLowTopic, AgentMsg, queue_size=1)
+        self.high_pub = rospy.Publisher(pubHighTopic, AgentMsg, queue_size=1)
         # TODO Don't think this is needed anymore, just put it in the AgentMsg?
-        self.beacon_pub = rospy.Publisher('beacons', BeaconArray, queue_size=10)
+        # self.beacon_pub = rospy.Publisher('beacons', BeaconArray, queue_size=10)
 
         # Setup the base station monitors
         if self.type == 'base':
@@ -454,6 +459,7 @@ class MultiAgent:
         self.buildArtifactMarkers()
         self.monitor['artifacts'].publish(self.martifact)
 
+    # TODO Move this to something else since it doesn't actually publish anymore.  Maybe buildAgentMessage?
     def publishBeacons(self):
         commBeacons = []
         for beacon in self.beacons.values():
@@ -465,7 +471,7 @@ class MultiAgent:
                 commBeacons.append(commBeacon)
 
         self.beaconsArray = commBeacons
-        self.beacon_pub.publish(self.beaconsArray)
+        # self.beacon_pub.publish(self.beaconsArray)
 
     def WaitMonitor(self, data):
         if data.status > 0:
@@ -502,13 +508,15 @@ class MultiAgent:
         msg.odometry = agent.odometry
         msg.goal = agent.goal
         msg.lastMessage.data = agent.lastMessage
+        msg.newArtifacts = agent.newArtifacts
 
         # TODO Map will get moved to only self once we start merging maps
         msg.map = agent.map
+        # Data that's only sent via direct comms
         if agent.id == self.id:
+            msg.type = self.type
             msg.commBeacons.data = self.beaconsArray
             # TODO this isn't going to work.  Need to figure it out.
-            msg.newArtifacts = agent.newArtifacts
 
     def CommCheck(self):
         # Simply check when the last time we saw a message and set status
@@ -574,20 +582,20 @@ class MultiAgent:
         # If we're talking to a beacon, we only update it's neighbor array
         # If we move the Beacons message to the AgentMsg may need to rethink
         runComm = False
-        if 'B' in data.id:
+        if data.type == 'beacon':
             if self.beacons[data.id].simcomm:
                 runComm = True
                 notStart = rospy.get_rostime() > rospy.Time(0)
-
+                # Need to figure out how to update commBeacons on self if received from a beacon!
+        elif data.type == 'base':
+            runComm = True
+            notStart = rospy.get_rostime() > rospy.Time(0)
         elif self.neighbors[data.id].simcomm:
             runComm = True
             notStart = self.neighbors[data.id].lastMessage > rospy.Time(0)
 
             # Load data from our neighbors, and their neighbors
             self.neighbors[data.id].update(data, self.id)
-            # If it's low bandwidth then the map is empty, so don't overwrite!
-            if len(str(data.map.data)) > 100:
-                self.neighbors[data.id].map = data.map
 
         if runComm:
             # TODO Right now all maps are being sent, even if it's your own.  Can optimize.
@@ -602,7 +610,6 @@ class MultiAgent:
                 # Make sure the neighbor isn't ourself, it's not a stale message,
                 # and we've already talked directly to the neighbor in the last N seconds
                 if neighbor2.id != self.id:
-                    hasMap = len(str(neighbor2.map.data)) > 100
                     # TODO need to look at what timestamp we should be looking at for neighbor2
                     # May have just been a problem from restarting mid course
                     newerMessage = (neighbor2.lastMessage.data >
@@ -612,8 +619,6 @@ class MultiAgent:
 
                     if (notStart and (newerMessage and (notDirectComm or not incomm))):
                         self.neighbors[neighbor2.id].update(neighbor2)
-                        if hasMap:
-                            self.neighbors[neighbor2.id].map = neighbor2.map
 
     def updateHistory(self):
         self.history.append(self.agent.odometry.pose.pose)
@@ -904,7 +909,7 @@ class MultiAgent:
             for neighbor in pubDataLow.neighbors:
                 neighbor.map.data = ''
 
-            self.low_pub.publish(pubDataLow)
+            # self.low_pub.publish(pubDataLow)
             self.high_pub.publish(pubDataHigh)
 
             rate.sleep()

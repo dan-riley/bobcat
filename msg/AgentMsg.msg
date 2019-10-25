@@ -1,6 +1,7 @@
 Header header
 string id
 string cid
+string type
 nav_msgs/Odometry odometry
 geometry_msgs/PoseStamped goal
 octomap_msgs/Octomap map

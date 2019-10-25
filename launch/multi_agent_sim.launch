@@ -7,6 +7,8 @@
   <arg name="type" default="robot" />
   <!-- Rate to run the node at -->
   <arg name="rate" default="1" />
+  <!-- Whether to republish neighbor topics for visualization or other needs -->
+  <arg name="monitor" default="true" />
   <!-- Whether to use simulated comms -->
   <arg name="simcomms" default="true" />
   <!-- Whether to run the agent solo (simulates always in comm with base) -->
@@ -29,6 +31,10 @@
   <arg name="totalBeacons" default="8" />
   <!-- List of all potentially deployed neighbors.  Determines what topics are subscribed. -->
   <arg name="potentialNeighbors" default="X1,X2" />
+  <!-- Topic to publish/subscribe low bandwidth data to neighbors -->
+  <arg name="pubLowTopic" default="low_data" />
+  <!-- Topic to publish/subscribe high bandwidth data to neighbors -->
+  <arg name="pubHighTopic" default="high_data" />
   <!-- Topic to monitor from base station to ensure we're in comm -->
   <arg name="baseTopic" default="/Anchor/ma_status" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
@@ -51,6 +57,7 @@
     <param name="vehicle" value="$(arg vehicle)" />
     <param name="type" value="$(arg type)" />
     <param name="rate" value="$(arg rate)" />
+    <param name="monitor" value="$(arg monitor)" />
     <param name="simcomms" value="$(arg simcomms)" />
     <param name="solo" value="$(arg solo)" />
     <param name="commThreshold" value="$(arg commThreshold)" />
@@ -62,6 +69,8 @@
     <param name="numBeacons" value="$(arg numBeacons)" />
     <param name="totalBeacons" value="$(arg totalBeacons)" />
     <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
+    <param name="pubLowTopic" value="$(arg pubLowTopic)" />
+    <param name="pubHighTopic" value="$(arg pubHighTopic)" />
     <param name="baseTopic" value="$(arg baseTopic)" />
     <param name="stopTopic" value="$(arg stopTopic)" />
     <param name="waitTopic" value="$(arg waitTopic)" />
