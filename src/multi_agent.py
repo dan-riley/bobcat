@@ -227,7 +227,7 @@ class MultiAgent:
         # Rate to run the node at
         self.rate = rospy.get_param('multi_agent/rate', 1)
         # Whether to republish neighbor data for visualization or other uses
-        self.monitor = rospy.get_param('multi_agent/monitor', False)
+        self.useMonitor = rospy.get_param('multi_agent/monitor', False)
         # Whether to use simulated comms or real comms
         self.useSimComms = rospy.get_param('multi_agent/simcomms', False)
         # Whether to run the agent without a base station (comms always true)
@@ -331,7 +331,7 @@ class MultiAgent:
             # Subscribers for the packaged data
             subLowTopic = '/' + nid + '/' + pubLowTopic
             subHighTopic = '/' + nid + '/' + pubHighTopic
-            # self.low_sub[nid] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
+            self.low_sub[nid] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
             self.high_sub[nid] = rospy.Subscriber(subHighTopic, AgentMsg, self.CommReceiver)
 
             if self.useSimComms:
@@ -340,7 +340,7 @@ class MultiAgent:
                     rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
 
             # Setup topics for visualization at whichever monitors are specified (always base)
-            if self.monitor or self.type == 'base':
+            if self.useMonitor or self.type == 'base':
                 topic = 'neighbors/' + nid + '/'
                 self.monitor[nid] = {}
                 self.monitor[nid]['odometry'] = \
@@ -371,7 +371,7 @@ class MultiAgent:
             # Subscribers for the packaged data
             subLowTopic = '/' + nid + '/' + pubLowTopic
             subHighTopic = '/' + nid + '/' + pubHighTopic
-            # self.low_sub[nid] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
+            self.low_sub[nid] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
             self.high_sub[nid] = rospy.Subscriber(subHighTopic, AgentMsg, self.CommReceiver)
 
             if self.useSimComms:
@@ -502,7 +502,7 @@ class MultiAgent:
 
         self.base_pub.publish(msg)
 
-    def buildAgentMessage(self, msg, agent):
+    def buildAgentMessage(self, msg, agent, high):
         msg.id = agent.id
         msg.cid = agent.cid
         msg.odometry = agent.odometry
@@ -511,7 +511,9 @@ class MultiAgent:
         msg.newArtifacts = agent.newArtifacts
 
         # TODO Map will get moved to only self once we start merging maps
-        msg.map = agent.map
+        # Only add the map data if we're handling high bandwidth
+        if high:
+            msg.map = agent.map
         # Data that's only sent via direct comms
         if agent.id == self.id:
             msg.type = self.type
@@ -897,19 +899,21 @@ class MultiAgent:
             # Publish our data!  Publishing both low and high bandwidth so low doesn't depend
             # on the high bandwidth getting through
             pubDataHigh = AgentMsg()
-            self.buildAgentMessage(pubDataHigh, self.agent)
+            self.buildAgentMessage(pubDataHigh, self.agent, True)
             for neighbor in self.neighbors.values():
                 msg = NeighborMsg()
-                self.buildAgentMessage(msg, neighbor)
+                self.buildAgentMessage(msg, neighbor, True)
                 pubDataHigh.neighbors.append(msg)
 
             # Remove the maps from low bandwidth.  May consider removing other data as well.
-            pubDataLow = copy.deepcopy(pubDataHigh)
-            pubDataLow.map.data = ''
-            for neighbor in pubDataLow.neighbors:
-                neighbor.map.data = ''
+            pubDataLow = AgentMsg()
+            self.buildAgentMessage(pubDataLow, self.agent, False)
+            for neighbor in self.neighbors.values():
+                msg = NeighborMsg()
+                self.buildAgentMessage(msg, neighbor, False)
+                pubDataLow.neighbors.append(msg)
 
-            # self.low_pub.publish(pubDataLow)
+            self.low_pub.publish(pubDataLow)
             self.high_pub.publish(pubDataHigh)
 
             rate.sleep()
