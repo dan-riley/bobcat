@@ -2,7 +2,6 @@
 from __future__ import print_function
 from cmath import rect, phase
 import math
-import copy
 import hashlib
 import rospy
 
@@ -42,6 +41,8 @@ class Neighbor(object):
         self.newArtifacts = ArtifactArray()
         self.artifacts = {}
         self.lastMessage = rospy.get_rostime()
+        self.lastDirectMessage = self.lastMessage
+        self.lastHighMessage = self.lastMessage
         self.lastArtifact = ''
         self.incomm = True
         self.simcomm = True
@@ -57,13 +58,16 @@ class Neighbor(object):
         self.incomm = boolean flag whether the agent is currently in comm, useful only at anchor
         """
 
-    def update(self, neighbor, updater=False):
+    def update(self, neighbor, offset, updater=False):
         self.odometry = neighbor.odometry
         self.goal = neighbor.goal
 
         # Update the map if it's not empty (ie, high bandwidth message)
         if len(str(neighbor.map.data)) > 100:
+            hbw = True
             self.map = neighbor.map
+        else:
+            hbw = False
 
         # Update parameters depending on if we're talking directly or not
         if updater:
@@ -71,11 +75,17 @@ class Neighbor(object):
             self.newArtifacts = neighbor.newArtifacts
             self.cid = updater
             self.lastMessage = rospy.get_rostime()
+            self.lastDirectMessage = self.lastMessage
             self.incomm = True
+            if hbw:
+                self.lastHighMessage = self.lastMessage
         else:
             self.cid = neighbor.cid
-            self.lastMessage = neighbor.lastMessage.data
             self.incomm = False
+            # Update the timestamp with the offset between machines
+            self.lastMessage = neighbor.lastMessage.data + offset
+            if hbw:
+                self.lastHighMessage = neighbor.lastMessage.data + offset
 
     # def update(self, pos, goal, goalType, cost):
     #     self.pos = pos
@@ -163,13 +173,11 @@ class DataListener:
                                  Octomap, self.Receiver, 'map')
 
     def Receiver(self, data, parameter):
-        # TODO won't need the simcomm check if we're only subscribed to our internal data. ^^^
-        if self.agent.simcomm:
-            setattr(self.agent, parameter, data)
-            self.agent.lastMessage = rospy.get_rostime()
+        setattr(self.agent, parameter, data)
 
         # Throttle our updates to at least faster than the multi-agent node
         # Don't throttle an octomap or it doesn't update properly
+        # TODO Do we need this anymore?
         if parameter != 'map':
             rospy.sleep(0.5)
 
@@ -321,8 +329,6 @@ class MultiAgent:
         if self.useSimComms:
             self.comm_sub[self.id] = \
                 rospy.Subscriber('commcheck', CommsCheckArray, self.simCommChecker, self.id)
-            self.comm_sub[self.id] = \
-                rospy.Subscriber('/Anchor/commcheck', CommsCheckArray, self.simCommChecker, 'Anchor')
 
         # Setup the listeners for each neighbor
         for nid in [n for n in neighbors if n != self.id]:
@@ -368,11 +374,12 @@ class MultiAgent:
 
             self.beacons[nid] = BeaconObj(nid, owner)
 
-            # Subscribers for the packaged data
-            subLowTopic = '/' + nid + '/' + pubLowTopic
-            subHighTopic = '/' + nid + '/' + pubHighTopic
-            self.low_sub[nid] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
-            self.high_sub[nid] = rospy.Subscriber(subHighTopic, AgentMsg, self.CommReceiver)
+            if self.id != nid:
+                # Subscribers for the packaged data
+                subLowTopic = '/' + nid + '/' + pubLowTopic
+                subHighTopic = '/' + nid + '/' + pubHighTopic
+                self.low_sub[nid] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
+                self.high_sub[nid] = rospy.Subscriber(subHighTopic, AgentMsg, self.CommReceiver)
 
             if self.useSimComms:
                 comm_topic = '/' + nid + '/commcheck'
@@ -507,13 +514,16 @@ class MultiAgent:
         msg.cid = agent.cid
         msg.odometry = agent.odometry
         msg.goal = agent.goal
-        msg.lastMessage.data = agent.lastMessage
         msg.newArtifacts = agent.newArtifacts
 
         # TODO Map will get moved to only self once we start merging maps
         # Only add the map data if we're handling high bandwidth
         if high:
             msg.map = agent.map
+            msg.lastMessage.data = agent.lastHighMessage
+        else:
+            msg.lastMessage.data = agent.lastMessage
+
         # Data that's only sent via direct comms
         if agent.id == self.id:
             msg.type = self.type
@@ -523,7 +533,7 @@ class MultiAgent:
     def CommCheck(self):
         # Simply check when the last time we saw a message and set status
         for neighbor in self.neighbors.values():
-            neighbor.incomm = neighbor.lastMessage > rospy.get_rostime() - self.commThreshold
+            neighbor.incomm = neighbor.lastDirectMessage > rospy.get_rostime() - self.commThreshold
 
         # TODO Do we need this for beacons?!
         # Same with base station
@@ -556,9 +566,9 @@ class MultiAgent:
 
         # Set the simcomm based on the newly modified matrix
         for simcomm in self.simcomms.values():
-            if 'B' in simcomm.id:
+            if 'B' in simcomm.id and simcomm.id in self.beacons:
                 self.beacons[simcomm.id].simcomm = simcomm.incomm
-            elif simcomm.id != 'Anchor':
+            elif simcomm.id != 'Anchor' and simcomm.id in self.neighbors:
                 self.neighbors[simcomm.id].simcomm = simcomm.incomm
 
         # Base comms are whatever our status with the anchor is
@@ -566,6 +576,9 @@ class MultiAgent:
             self.base.simcomm = self.simcomms['Anchor'].incomm
 
     def CommReceiver(self, data):
+        # Approximately account for different system times.  Assumes negligible transmit time.
+        offset = rospy.get_rostime() - data.header.stamp
+
         # If I'm a beacon, don't do anything!
         if self.type == 'beacon' and not self.beacon.active:
             activate = False
@@ -597,7 +610,7 @@ class MultiAgent:
             notStart = self.neighbors[data.id].lastMessage > rospy.Time(0)
 
             # Load data from our neighbors, and their neighbors
-            self.neighbors[data.id].update(data, self.id)
+            self.neighbors[data.id].update(data, offset, self.id)
 
         if runComm:
             # TODO Right now all maps are being sent, even if it's your own.  Can optimize.
@@ -612,15 +625,26 @@ class MultiAgent:
                 # Make sure the neighbor isn't ourself, it's not a stale message,
                 # and we've already talked directly to the neighbor in the last N seconds
                 if neighbor2.id != self.id:
-                    # TODO need to look at what timestamp we should be looking at for neighbor2
-                    # May have just been a problem from restarting mid course
-                    newerMessage = (neighbor2.lastMessage.data >
-                                    self.neighbors[neighbor2.id].lastMessage + rospy.Duration(5))
+                    # If the message is coming from the same place, take all messages so we don't
+                    # miss a high bandwidth message.  Otherwise add an offset to prevent looping.
+                    if data.id == neighbor2.cid:
+                        messOffset = rospy.Duration(0)
+                    else:
+                        messOffset = self.commThreshold
+
+                    # Need to look at high bandwidth messages with a separate timestamp
+                    if len(str(neighbor2.map.data)) > 100:
+                        newerMessage = (neighbor2.lastMessage.data + offset >
+                                        self.neighbors[neighbor2.id].lastHighMessage + messOffset)
+                    else:
+                        newerMessage = (neighbor2.lastMessage.data + offset >
+                                        self.neighbors[neighbor2.id].lastMessage + messOffset)
+
                     notDirectComm = self.neighbors[neighbor2.id].cid != self.id
                     incomm = self.neighbors[neighbor2.id].incomm
 
                     if (notStart and (newerMessage and (notDirectComm or not incomm))):
-                        self.neighbors[neighbor2.id].update(neighbor2)
+                        self.neighbors[neighbor2.id].update(neighbor2, offset)
 
     def updateHistory(self):
         self.history.append(self.agent.odometry.pose.pose)
@@ -913,7 +937,9 @@ class MultiAgent:
                 self.buildAgentMessage(msg, neighbor, False)
                 pubDataLow.neighbors.append(msg)
 
+            pubDataLow.header.stamp = rospy.get_rostime()
             self.low_pub.publish(pubDataLow)
+            pubDataHigh.header.stamp = rospy.get_rostime()
             self.high_pub.publish(pubDataHigh)
 
             rate.sleep()
