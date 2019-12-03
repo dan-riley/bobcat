@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <!-- Vehicle name for namespace and topic id -->
+  <arg name="vehicle" default="B1" />
+  <arg name="ns" default="/$(arg vehicle)" />
+  <!-- Type of node.  Current options are 'robot' and 'base' -->
+  <arg name="type" default="beacon" />
+  <!-- Rate to run the node at -->
+  <arg name="rate" default="1" />
+  <!-- Whether to republish neighbor topics for visualization or other needs -->
+  <arg name="monitor" default="false" />
+  <!-- Whether to use simulated comms -->
+  <arg name="simcomms" default="false" />
+  <!-- Whether to run the agent solo (simulates always in comm with base) -->
+  <arg name="solo" default="false" />
+  <!-- How long without a message to consider 'lost comms' -->
+  <arg name="commThreshold" default="2" />
+  <!-- How far to drive from the anchor before automatically dropping a beacon -->
+  <arg name="anchorDropDist" default="100" />
+  <!-- How far to drive before automatically dropping a beacon -->
+  <arg name="dropDist" default="30" />
+  <!-- Minimum distance between nodes before dropping another beacon -->
+  <arg name="junctionDist" default="10" />
+  <!-- Whether to use turn detection to drop beacons -->
+  <arg name="turnDetect" default="true" />
+  <!-- Whether to delay beacon deployment so the trailing robot can drop instead -->
+  <arg name="delayDrop" default="false" />
+  <!-- How many beacons this agent is carrying.  Ignored for 'base' type. -->
+  <arg name="numBeacons" default="16" />
+  <!-- Total number of beacons across all deployed agents.  Higher is ok. -->
+  <arg name="totalBeacons" default="48" />
+  <!-- List of all potentially deployed neighbors.  Determines what topics are subscribed. -->
+  <arg name="potentialNeighbors" default="H01,H02,H03" />
+  <!-- Topic to publish/subscribe low bandwidth data to neighbors -->
+  <arg name="pubLowTopic" default="low_data" />
+  <!-- Topic to publish/subscribe high bandwidth data to neighbors -->
+  <arg name="pubHighTopic" default="high_data" />
+  <!-- Topic to monitor from base station to ensure we're in comm -->
+  <arg name="baseTopic" default="/Base/ma_status" />
+  <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
+  <arg name="stopTopic" default="stop_for_beacon_drop" />
+  <arg name="statusTopic" default="task_update" />
+  <arg name="waitTopic" default="origin_detection_status" />
+  <arg name="commTopic" default="base_comm" />
+  <arg name="odomTopic" default="odometry" />
+  <arg name="goalTopic" default="node_skeleton/next_turn_pose" />
+  <arg name="mapTopic" default="octomap_binary" />
+  <arg name="nodeTopic" default="at_node_center" />
+  <arg name="artifactsTopic" default="artifact_array/relay" />
+  <!-- Approximate location of anchor node, for first beacon drop distance calc -->
+  <arg name="anchorX" default="0.0" />
+  <arg name="anchorY" default="0.0" />
+  <arg name="anchorZ" default="0.0" />
+
+  <node ns="$(arg ns)" pkg="marble_multi_agent" type="multi_agent.py" name="multi_agent" output="screen">
+    <!-- Parameters -->
+    <param name="vehicle" value="$(arg vehicle)" />
+    <param name="type" value="$(arg type)" />
+    <param name="rate" value="$(arg rate)" />
+    <param name="monitor" value="$(arg monitor)" />
+    <param name="simcomms" value="$(arg simcomms)" />
+    <param name="solo" value="$(arg solo)" />
+    <param name="commThreshold" value="$(arg commThreshold)" />
+    <param name="anchorDropDist" value="$(arg anchorDropDist)" />
+    <param name="dropDist" value="$(arg dropDist)" />
+    <param name="junctionDist" value="$(arg junctionDist)" />
+    <param name="turnDetect" value="$(arg turnDetect)" />
+    <param name="delayDrop" value="$(arg delayDrop)" />
+    <param name="numBeacons" value="$(arg numBeacons)" />
+    <param name="totalBeacons" value="$(arg totalBeacons)" />
+    <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
+    <param name="pubLowTopic" value="$(arg pubLowTopic)" />
+    <param name="pubHighTopic" value="$(arg pubHighTopic)" />
+    <param name="baseTopic" value="$(arg baseTopic)" />
+    <param name="stopTopic" value="$(arg stopTopic)" />
+    <param name="waitTopic" value="$(arg waitTopic)" />
+    <param name="commTopic" value="$(arg commTopic)" />
+    <param name="odomTopic" value="$(arg odomTopic)" />
+    <param name="goalTopic" value="$(arg goalTopic)" />
+    <param name="mapTopic" value="$(arg mapTopic)" />
+    <param name="nodeTopic" value="$(arg nodeTopic)" />
+    <param name="artifactsTopic" value="$(arg artifactsTopic)" />
+    <param name="anchorX" value="$(arg anchorX)" />
+    <param name="anchorY" value="$(arg anchorY)" />
+    <param name="anchorZ" value="$(arg anchorZ)" />
+  </node>
+</launch>

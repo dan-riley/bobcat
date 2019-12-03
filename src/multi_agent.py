@@ -63,7 +63,7 @@ class Neighbor(object):
         self.goal = neighbor.goal
 
         # Update the map if it's not empty (ie, high bandwidth message)
-        if len(str(neighbor.map.data)) > 100:
+        if neighbor.map.data != '':
             hbw = True
             self.map = neighbor.map
         else:
