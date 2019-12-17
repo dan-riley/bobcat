@@ -6,6 +6,7 @@ import hashlib
 import rospy
 
 from std_msgs.msg import Bool
+from std_msgs.msg import Int8
 from std_msgs.msg import String
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Point
@@ -63,7 +64,7 @@ class Neighbor(object):
         self.goal = neighbor.goal
 
         # Update the map if it's not empty (ie, high bandwidth message)
-        if neighbor.map.data != '':
+        if neighbor.map.data:
             hbw = True
             self.map = neighbor.map
         else:
@@ -241,7 +242,7 @@ class MultiAgent:
         # Whether to run the agent without a base station (comms always true)
         self.solo = rospy.get_param('multi_agent/solo', False)
         # Time without message for lost comm
-        self.commThreshold = rospy.Duration(rospy.get_param('multi_agent/commThreshold', False), 2)
+        self.commThreshold = rospy.Duration(rospy.get_param('multi_agent/commThreshold', 2))
         # Distance from Anchor to drop beacons automatically
         self.maxAnchorDist = rospy.get_param('multi_agent/anchorDropDist', 100)
         # Distance to drop beacons automatically
@@ -261,6 +262,7 @@ class MultiAgent:
         # Topics
         pubLowTopic = rospy.get_param('multi_agent/pubLowTopic', 'low_data')
         pubHighTopic = rospy.get_param('multi_agent/pubHighTopic', 'high_data')
+        homeTopic = rospy.get_param('multi_agent/homeTopic', 'report_artifact')
         baseTopic = rospy.get_param('multi_agent/baseTopic', '/Base/ma_status')
         stopTopic = rospy.get_param('multi_agent/stopTopic', 'stop_for_beacon_drop')
         statusTopic = rospy.get_param('multi_agent/statusTopic', 'task_update')
@@ -313,6 +315,8 @@ class MultiAgent:
             DataListener(self.agent, 'robot', self.useSimComms, topics)
             self.task_pub = rospy.Publisher('task', String, queue_size=10)
             self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
+            self.num_pub = rospy.Publisher('num_neighbors', Int8, queue_size=10)
+            self.home_pub = rospy.Publisher(homeTopic, Bool, queue_size=10)
             self.stop_pub = rospy.Publisher(stopTopic, Bool, queue_size=10)
             self.comm_pub = rospy.Publisher(commTopic, Bool, queue_size=10)
             self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
@@ -633,7 +637,7 @@ class MultiAgent:
                         messOffset = self.commThreshold
 
                     # Need to look at high bandwidth messages with a separate timestamp
-                    if len(str(neighbor2.map.data)) > 100:
+                    if neighbor2.map.data:
                         newerMessage = (neighbor2.lastMessage.data + offset >
                                         self.neighbors[neighbor2.id].lastHighMessage + messOffset)
                     else:
@@ -892,9 +896,18 @@ class MultiAgent:
                 # Check if we need to drop a beacon
                 self.beaconCheck()
 
+                num_neighbors = 0
                 # Get our neighbors' artifacts so we can deconflict reporting
                 for neighbor in self.neighbors.values():
                     self.artifactCheck(neighbor, neighbor.artifacts)
+
+                    # Count how many neighbors we have current goal information for deconfliction
+                    # Using 60 seconds for now
+                    if neighbor.lastMessage > rospy.get_rostime() - self.commThreshold * 30:
+                        num_neighbors += 1
+
+                # Publish the number of neighbors that frontier exploration should consider
+                self.num_pub.publish(num_neighbors)
 
                 # Make sure our internal artifact list is up to date, and if we need to report
                 self.artifactCheck(self.agent, self.artifacts)
@@ -905,6 +918,8 @@ class MultiAgent:
                     # Once we see the base has our latest artifact report we can stop going home
                     if self.solo or self.base.lastArtifact == self.agent.lastArtifact:
                         # Only change our task if we set it!
+                        # TODO need to check the task and task_update topics for changes
+                        self.home_pub.publish(False)
                         if self.status == 'Report':
                             self.task_pub.publish('Explore')
 
@@ -914,6 +929,7 @@ class MultiAgent:
                     else:
                         print(self.id, 'return to report...')
                         self.task_pub.publish('Report')
+                        self.home_pub.publish(True)
 
             # If I'm a beacon, don't publish anything!  But keep listening for activate message.
             if self.type == 'beacon' and not self.beacon.active:

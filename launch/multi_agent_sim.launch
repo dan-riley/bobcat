@@ -35,6 +35,8 @@
   <arg name="pubLowTopic" default="low_data" />
   <!-- Topic to publish/subscribe high bandwidth data to neighbors -->
   <arg name="pubHighTopic" default="high_data" />
+  <!-- Topic the frontier exploration node listens to to calculate path home -->
+  <arg name="homeTopic" default="report_artifact" />
   <!-- Topic to monitor from base station to ensure we're in comm -->
   <arg name="baseTopic" default="/Anchor/ma_status" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
@@ -71,6 +73,7 @@
     <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
     <param name="pubLowTopic" value="$(arg pubLowTopic)" />
     <param name="pubHighTopic" value="$(arg pubHighTopic)" />
+    <param name="homeTopic" value="$(arg homeTopic)" />
     <param name="baseTopic" value="$(arg baseTopic)" />
     <param name="stopTopic" value="$(arg stopTopic)" />
     <param name="waitTopic" value="$(arg waitTopic)" />
