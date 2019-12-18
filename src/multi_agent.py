@@ -27,7 +27,7 @@ from marble_multi_agent.msg import AgentArtifact
 from marble_multi_agent.msg import BaseMonitor
 
 
-class Neighbor(object):
+class Agent(object):
     """ Data structure to hold pertinent information about other agents """
 
     def __init__(self, agent_id, parent_id):
@@ -100,16 +100,6 @@ class Neighbor(object):
     #     self.path = path
 
 
-# TODO I don't think we need this anymore, as we're using a separate neighbors array anyway
-# Should probably change the Neighbor class to Agent and remove this
-class Agent(Neighbor):
-    """ Sub-class for an individual agent, with an array of neighbors to pass data """
-
-    def __init__(self, agent_id):
-        super(Agent, self).__init__(agent_id, agent_id)
-        self.neighbors = {}
-
-
 class Base(object):
     """ Data structure to hold pertinent information about the base station """
 
@@ -149,38 +139,27 @@ class ArtifactReport:
 class DataListener:
     """ Listens to all of the applicable topics and repackages into a single object """
 
-    def __init__(self, agent, agent_type, simcomm, topics):
-        self.agent = agent  # Agent or Neighbor object
+    def __init__(self, agent, topics):
+        self.agent = agent  # Agent object
 
-        # self.beacon_sub = \
-        #     rospy.Subscriber('/' + self.agent.id + '/beacons',
-        #                      BeaconArray, self.Receiver, 'commBeacons', queue_size=1)
         self.artifact_sub = \
             rospy.Subscriber('/' + self.agent.id + '/' + topics['artifacts'],
                              ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
-
-        if agent_type == 'robot' or (agent_type == 'base' and simcomm):
-            self.odom_sub = \
-                rospy.Subscriber('/' + self.agent.id + '/' + topics['odometry'],
-                                 Odometry, self.Receiver, 'odometry', queue_size=1)
-            self.goal_sub = \
-                rospy.Subscriber('/' + self.agent.id + '/' + topics['goal'],
-                                 PoseStamped, self.Receiver, 'goal', queue_size=1)
-            self.node_sub = \
-                rospy.Subscriber('/' + self.agent.id + '/' + topics['node'],
-                                 Bool, self.Receiver, 'atnode', queue_size=1)
-            self.map_sub = \
-                rospy.Subscriber('/' + self.agent.id + '/' + topics['map'],
-                                 Octomap, self.Receiver, 'map')
+        self.odom_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/' + topics['odometry'],
+                             Odometry, self.Receiver, 'odometry', queue_size=1)
+        self.goal_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/' + topics['goal'],
+                             PoseStamped, self.Receiver, 'goal', queue_size=1)
+        self.node_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/' + topics['node'],
+                             Bool, self.Receiver, 'atnode', queue_size=1)
+        self.map_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/' + topics['map'],
+                             Octomap, self.Receiver, 'map')
 
     def Receiver(self, data, parameter):
         setattr(self.agent, parameter, data)
-
-        # Throttle our updates to at least faster than the multi-agent node
-        # Don't throttle an octomap or it doesn't update properly
-        # TODO Do we need this anymore?
-        if parameter != 'map':
-            rospy.sleep(0.5)
 
 
 def getDist(pos1, pos2):
@@ -308,11 +287,11 @@ class MultiAgent:
             self.start_time = rospy.get_rostime()
 
         # Initialize object for our own data
-        self.agent = Agent(self.id)
+        self.agent = Agent(self.id, self.id)
 
         # Setup the internal listeners if we're a robot
         if self.type == 'robot':
-            DataListener(self.agent, 'robot', self.useSimComms, topics)
+            DataListener(self.agent, topics)
             self.task_pub = rospy.Publisher('task', String, queue_size=10)
             self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
             self.num_pub = rospy.Publisher('num_neighbors', Int8, queue_size=10)
@@ -336,7 +315,7 @@ class MultiAgent:
 
         # Setup the listeners for each neighbor
         for nid in [n for n in neighbors if n != self.id]:
-            self.neighbors[nid] = Neighbor(nid, self.id)
+            self.neighbors[nid] = Agent(nid, self.id)
 
             # Subscribers for the packaged data
             subLowTopic = '/' + nid + '/' + pubLowTopic
@@ -470,20 +449,6 @@ class MultiAgent:
         self.buildArtifactMarkers()
         self.monitor['artifacts'].publish(self.martifact)
 
-    # TODO Move this to something else since it doesn't actually publish anymore.  Maybe buildAgentMessage?
-    def publishBeacons(self):
-        commBeacons = []
-        for beacon in self.beacons.values():
-            if beacon.active:
-                commBeacon = Beacon()
-                commBeacon.id = beacon.id
-                commBeacon.active = beacon.active
-                commBeacon.pos = beacon.pos
-                commBeacons.append(commBeacon)
-
-        self.beaconsArray = commBeacons
-        # self.beacon_pub.publish(self.beaconsArray)
-
     def WaitMonitor(self, data):
         if data.status > 0:
             self.wait = False
@@ -492,6 +457,7 @@ class MultiAgent:
         self.status = data.data
 
     def BaseMonitor(self, data):
+        # TODO is this still needed?  Just use the Anchor/low_data message?  add lastArtifact to it
         # Get the beacons from the base, and artifact status
         if self.base.simcomm:
             self.base.lastMessage = rospy.get_rostime()
@@ -533,6 +499,7 @@ class MultiAgent:
             msg.type = self.type
             msg.commBeacons.data = self.beaconsArray
             # TODO this isn't going to work.  Need to figure it out.
+            # Think this is fine if we assume beacons always talk to base?
 
     def CommCheck(self):
         # Simply check when the last time we saw a message and set status
@@ -606,6 +573,7 @@ class MultiAgent:
                 runComm = True
                 notStart = rospy.get_rostime() > rospy.Time(0)
                 # Need to figure out how to update commBeacons on self if received from a beacon!
+                # TODO if we assume all beacons are talking to base then this isn't needed?
         elif data.type == 'base':
             runComm = True
             notStart = rospy.get_rostime() > rospy.Time(0)
@@ -668,6 +636,18 @@ class MultiAgent:
                 if beacon.active and not self.beacons[beacon.id].active:
                     self.beacons[beacon.id].pos = beacon.pos
                     self.beacons[beacon.id].active = True
+
+        # Update the beacons array that gets published with all known active beacons
+        commBeacons = []
+        for beacon in self.beacons.values():
+            if beacon.active:
+                commBeacon = Beacon()
+                commBeacon.id = beacon.id
+                commBeacon.active = beacon.active
+                commBeacon.pos = beacon.pos
+                commBeacons.append(commBeacon)
+
+        self.beaconsArray = commBeacons
 
     def deployBeacon(self, inplace, dropReason):
         deploy = False
@@ -878,9 +858,8 @@ class MultiAgent:
             # Update incomm based on last message seen
             self.CommCheck()
 
-            # Reconcile beacon list with neighbors', and publish the list
+            # Reconcile beacon list with neighbors'
             self.updateBeacons()
-            self.publishBeacons()
 
             # Update the visualization topics and base station status
             if self.type == 'base':
@@ -897,13 +876,19 @@ class MultiAgent:
                 self.beaconCheck()
 
                 num_neighbors = 0
+                # Time check for "current" neighbors.  Make sure we don't have negative time.
+                if rospy.get_rostime() > rospy.Time(0) + self.commThreshold * 30:
+                    neighbor_check = rospy.get_rostime() - self.commThreshold * 30
+                else:
+                    neighbor_check = rospy.get_rostime()
+
                 # Get our neighbors' artifacts so we can deconflict reporting
                 for neighbor in self.neighbors.values():
                     self.artifactCheck(neighbor, neighbor.artifacts)
 
                     # Count how many neighbors we have current goal information for deconfliction
                     # Using 60 seconds for now
-                    if neighbor.lastMessage > rospy.get_rostime() - self.commThreshold * 30:
+                    if neighbor.lastMessage > neighbor_check:
                         num_neighbors += 1
 
                 # Publish the number of neighbors that frontier exploration should consider
