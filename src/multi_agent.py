@@ -25,6 +25,7 @@ from marble_multi_agent.msg import Beacon
 from marble_multi_agent.msg import BeaconArray
 from marble_multi_agent.msg import AgentArtifact
 from marble_multi_agent.msg import BaseMonitor
+from octomap_merge.msg import OctomapArray
 
 
 class Agent(object):
@@ -368,6 +369,8 @@ class MultiAgent:
                 comm_topic = '/' + nid + '/commcheck'
                 self.comm_sub[nid] = \
                     rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
+
+        self.merge_pub = rospy.Publisher('neighbor_maps', OctomapArray, queue_size=1)
 
         # Publishers for the packaged data.  If we need to use custom publishers for each
         # neighbor we're talking to, then this has to moved above in the neighbor loop
@@ -920,6 +923,18 @@ class MultiAgent:
             if self.type == 'beacon' and not self.beacon.active:
                 rate.sleep()
                 continue
+
+            # Publish the neighbor maps so merge node can merge with our map
+            # TODO may need to change this for beacons and anchor since they don't have their own map
+            mergeMaps = OctomapArray()
+            mergeMaps.num_octomaps = 0
+            for neighbor in self.neighbors.values():
+                if neighbor.map.data:
+                    mergeMaps.octomaps.append(neighbor.map)
+                    mergeMaps.num_octomaps += 1
+
+            mergeMaps.header.stamp = rospy.get_rostime()
+            self.merge_pub.publish(mergeMaps)
 
             # Publish our data!  Publishing both low and high bandwidth so low doesn't depend
             # on the high bandwidth getting through
