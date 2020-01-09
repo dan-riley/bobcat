@@ -7,6 +7,7 @@ import rospy
 
 from std_msgs.msg import Bool
 from std_msgs.msg import Int8
+from std_msgs.msg import Float64
 from std_msgs.msg import String
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Point
@@ -25,7 +26,7 @@ from marble_multi_agent.msg import Beacon
 from marble_multi_agent.msg import BeaconArray
 from marble_multi_agent.msg import AgentArtifact
 from marble_multi_agent.msg import BaseMonitor
-from octomap_merge.msg import OctomapArray
+from octomap_merger.msg import OctomapArray
 
 
 class Agent(object):
@@ -39,6 +40,7 @@ class Agent(object):
         self.goal = PoseStamped()
         self.atnode = Bool()
         self.map = Octomap()
+        self.mapSize = Float64()
         self.commBeacons = BeaconArray()
         self.newArtifacts = ArtifactArray()
         self.artifacts = {}
@@ -64,13 +66,6 @@ class Agent(object):
         self.odometry = neighbor.odometry
         self.goal = neighbor.goal
 
-        # Update the map if it's not empty (ie, high bandwidth message)
-        if neighbor.map.data:
-            hbw = True
-            self.map = neighbor.map
-        else:
-            hbw = False
-
         # Update parameters depending on if we're talking directly or not
         if updater:
             self.commBeacons = neighbor.commBeacons
@@ -79,15 +74,16 @@ class Agent(object):
             self.lastMessage = rospy.get_rostime()
             self.lastDirectMessage = self.lastMessage
             self.incomm = True
-            if hbw:
+            # Update the map if it's not empty (ie, high bandwidth message)
+            if neighbor.map.data:
+                self.map = neighbor.map
+                self.mapSize = neighbor.mapSize
                 self.lastHighMessage = self.lastMessage
         else:
             self.cid = neighbor.cid
             self.incomm = False
             # Update the timestamp with the offset between machines
             self.lastMessage = neighbor.lastMessage.data + offset
-            if hbw:
-                self.lastHighMessage = neighbor.lastMessage.data + offset
 
     # def update(self, pos, goal, goalType, cost):
     #     self.pos = pos
@@ -158,6 +154,9 @@ class DataListener:
         self.map_sub = \
             rospy.Subscriber('/' + self.agent.id + '/' + topics['map'],
                              Octomap, self.Receiver, 'map')
+        self.size_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/' + topics['mapSize'],
+                             Float64, self.Receiver, 'mapSize')
 
     def Receiver(self, data, parameter):
         setattr(self.agent, parameter, data)
@@ -251,7 +250,8 @@ class MultiAgent:
         topics = {}
         topics['odometry'] = rospy.get_param('multi_agent/odomTopic', 'odometry')
         topics['goal'] = rospy.get_param('multi_agent/goalTopic', 'node_skeleton/next_turn_pose')
-        topics['map'] = rospy.get_param('multi_agent/mapTopic', 'octomap_binary')
+        topics['map'] = rospy.get_param('multi_agent/mapTopic', 'merged_map')
+        topics['mapSize'] = rospy.get_param('multi_agent/mapSizeTopic', 'merged_size')
         topics['node'] = rospy.get_param('multi_agent/nodeTopic', 'at_node_center')
         topics['artifacts'] = rospy.get_param('multi_agent/artifactsTopic', 'artifact_array/relay')
 
@@ -488,14 +488,7 @@ class MultiAgent:
         msg.odometry = agent.odometry
         msg.goal = agent.goal
         msg.newArtifacts = agent.newArtifacts
-
-        # TODO Map will get moved to only self once we start merging maps
-        # Only add the map data if we're handling high bandwidth
-        if high:
-            msg.map = agent.map
-            msg.lastMessage.data = agent.lastHighMessage
-        else:
-            msg.lastMessage.data = agent.lastMessage
+        msg.lastMessage.data = agent.lastMessage
 
         # Data that's only sent via direct comms
         if agent.id == self.id:
@@ -503,6 +496,11 @@ class MultiAgent:
             msg.commBeacons.data = self.beaconsArray
             # TODO this isn't going to work.  Need to figure it out.
             # Think this is fine if we assume beacons always talk to base?
+            msg.mapSize = self.agent.mapSize
+            # Only add the map data if we're handling high bandwidth
+            if high:
+                msg.map = agent.map
+                msg.lastMessage.data = agent.lastHighMessage
 
     def CommCheck(self):
         # Simply check when the last time we saw a message and set status
@@ -608,6 +606,7 @@ class MultiAgent:
                         messOffset = self.commThreshold
 
                     # Need to look at high bandwidth messages with a separate timestamp
+                    # TODO clean this up now that we only have merged maps
                     if neighbor2.map.data:
                         newerMessage = (neighbor2.lastMessage.data + offset >
                                         self.neighbors[neighbor2.id].lastHighMessage + messOffset)
@@ -931,6 +930,8 @@ class MultiAgent:
             for neighbor in self.neighbors.values():
                 if neighbor.map.data:
                     mergeMaps.octomaps.append(neighbor.map)
+                    mergeMaps.owners.append(neighbor.id)
+                    mergeMaps.sizes.append(neighbor.mapSize.data)
                     mergeMaps.num_octomaps += 1
 
             mergeMaps.header.stamp = rospy.get_rostime()

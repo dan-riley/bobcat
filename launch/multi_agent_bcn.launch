@@ -44,7 +44,8 @@
   <arg name="commTopic" default="base_comm" />
   <arg name="odomTopic" default="odometry" />
   <arg name="goalTopic" default="node_skeleton/next_turn_pose" />
-  <arg name="mapTopic" default="octomap_binary" />
+  <arg name="mapTopic" default="merged_map" />
+  <arg name="mapSizeTopic" default="merged_size" />
   <arg name="nodeTopic" default="at_node_center" />
   <arg name="artifactsTopic" default="artifact_array/relay" />
   <!-- Approximate location of anchor node, for first beacon drop distance calc -->
@@ -78,6 +79,7 @@
     <param name="odomTopic" value="$(arg odomTopic)" />
     <param name="goalTopic" value="$(arg goalTopic)" />
     <param name="mapTopic" value="$(arg mapTopic)" />
+    <param name="mapSizeTopic" value="$(arg mapSizeTopic)" />
     <param name="nodeTopic" value="$(arg nodeTopic)" />
     <param name="artifactsTopic" value="$(arg artifactsTopic)" />
     <param name="anchorX" value="$(arg anchorX)" />
