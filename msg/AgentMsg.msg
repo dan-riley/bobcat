@@ -3,7 +3,7 @@ string id
 string cid
 string type
 nav_msgs/Odometry odometry
-geometry_msgs/PoseStamped goal
+Goal goal
 octomap_msgs/Octomap map
 std_msgs/Float64 mapSize
 BeaconArray commBeacons

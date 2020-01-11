@@ -10,6 +10,7 @@ from std_msgs.msg import Int8
 from std_msgs.msg import Float64
 from std_msgs.msg import String
 from nav_msgs.msg import Odometry
+from nav_msgs.msg import Path
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
 from visualization_msgs.msg import Marker
@@ -26,7 +27,11 @@ from marble_multi_agent.msg import Beacon
 from marble_multi_agent.msg import BeaconArray
 from marble_multi_agent.msg import AgentArtifact
 from marble_multi_agent.msg import BaseMonitor
+from marble_multi_agent.msg import Goal
+from marble_multi_agent.msg import GoalArray
 from octomap_merger.msg import OctomapArray
+# from msfm3d.msg import Goal
+# from msfm3d.msg import GoalArray
 
 
 class Agent(object):
@@ -37,7 +42,8 @@ class Agent(object):
         self.pid = parent_id
         self.cid = ''
         self.odometry = Odometry()
-        self.goal = PoseStamped()
+        self.goal = Goal()
+        self.goals = GoalArray()
         self.atnode = Bool()
         self.map = Octomap()
         self.mapSize = Float64()
@@ -145,9 +151,9 @@ class DataListener:
         self.odom_sub = \
             rospy.Subscriber('/' + self.agent.id + '/' + topics['odometry'],
                              Odometry, self.Receiver, 'odometry', queue_size=1)
-        self.goal_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/' + topics['goal'],
-                             PoseStamped, self.Receiver, 'goal', queue_size=1)
+        self.goals_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/' + topics['goals'],
+                             GoalArray, self.Receiver, 'goals', queue_size=1)
         self.node_sub = \
             rospy.Subscriber('/' + self.agent.id + '/' + topics['node'],
                              Bool, self.Receiver, 'atnode', queue_size=1)
@@ -220,6 +226,8 @@ class MultiAgent:
         self.useSimComms = rospy.get_param('multi_agent/simcomms', False)
         # Whether to run the agent without a base station (comms always true)
         self.solo = rospy.get_param('multi_agent/solo', False)
+        # Distance to maintain goal point deconfliction
+        self.deconflictRadius = rospy.get_param('multi_agent/deconflictRadius', 2.5)
         # Time without message for lost comm
         self.commThreshold = rospy.Duration(rospy.get_param('multi_agent/commThreshold', 2))
         # Distance from Anchor to drop beacons automatically
@@ -238,7 +246,7 @@ class MultiAgent:
         totalBeacons = rospy.get_param('multi_agent/totalBeacons', 48)
         # Potential robot neighbors to monitor
         neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'H01,H02,H03').split(',')
-        # Topics
+        # Topics for publishers
         pubLowTopic = rospy.get_param('multi_agent/pubLowTopic', 'low_data')
         pubHighTopic = rospy.get_param('multi_agent/pubHighTopic', 'high_data')
         homeTopic = rospy.get_param('multi_agent/homeTopic', 'report_artifact')
@@ -247,9 +255,12 @@ class MultiAgent:
         statusTopic = rospy.get_param('multi_agent/statusTopic', 'task_update')
         waitTopic = rospy.get_param('multi_agent/waitTopic', 'origin_detection_status')
         commTopic = rospy.get_param('multi_agent/commTopic', 'base_comm')
+        goalTopic = rospy.get_param('multi_agent/goalTopic', 'ma_goal')
+        pathTopic = rospy.get_param('multi_agent/pathTopic', 'ma_goal_path')
+        # Topics for subscribers
         topics = {}
         topics['odometry'] = rospy.get_param('multi_agent/odomTopic', 'odometry')
-        topics['goal'] = rospy.get_param('multi_agent/goalTopic', 'node_skeleton/next_turn_pose')
+        topics['goals'] = rospy.get_param('multi_agent/goalsTopic', 'goal_array')
         topics['map'] = rospy.get_param('multi_agent/mapTopic', 'merged_map')
         topics['mapSize'] = rospy.get_param('multi_agent/mapSizeTopic', 'merged_size')
         topics['node'] = rospy.get_param('multi_agent/nodeTopic', 'at_node_center')
@@ -299,6 +310,8 @@ class MultiAgent:
             self.home_pub = rospy.Publisher(homeTopic, Bool, queue_size=10)
             self.stop_pub = rospy.Publisher(stopTopic, Bool, queue_size=10)
             self.comm_pub = rospy.Publisher(commTopic, Bool, queue_size=10)
+            self.goal_pub = rospy.Publisher(goalTopic, PoseStamped, queue_size=10)
+            self.path_pub = rospy.Publisher(pathTopic, Path, queue_size=10)
             self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
             self.status_sub = rospy.Subscriber(statusTopic, String, self.StatusMonitor)
 
@@ -440,7 +453,7 @@ class MultiAgent:
         if self.useSimComms:
             for neighbor in self.neighbors.values():
                 self.monitor[neighbor.id]['odometry'].publish(neighbor.odometry)
-                self.monitor[neighbor.id]['goal'].publish(neighbor.goal)
+                self.monitor[neighbor.id]['goal'].publish(neighbor.goal.pose)
                 self.monitor[neighbor.id]['map'].publish(neighbor.map)
 
         self.mbeacon.points = []
@@ -486,9 +499,13 @@ class MultiAgent:
         msg.id = agent.id
         msg.cid = agent.cid
         msg.odometry = agent.odometry
-        msg.goal = agent.goal
         msg.newArtifacts = agent.newArtifacts
         msg.lastMessage.data = agent.lastMessage
+
+        # Build the goal message without sending the path as well
+        msg.goal = Goal()
+        msg.goal.pose = agent.goal.pose
+        msg.goal.cost = agent.goal.cost
 
         # Data that's only sent via direct comms
         if agent.id == self.id:
@@ -607,12 +624,8 @@ class MultiAgent:
 
                     # Need to look at high bandwidth messages with a separate timestamp
                     # TODO clean this up now that we only have merged maps
-                    if neighbor2.map.data:
-                        newerMessage = (neighbor2.lastMessage.data + offset >
-                                        self.neighbors[neighbor2.id].lastHighMessage + messOffset)
-                    else:
-                        newerMessage = (neighbor2.lastMessage.data + offset >
-                                        self.neighbors[neighbor2.id].lastMessage + messOffset)
+                    newerMessage = (neighbor2.lastMessage.data + offset >
+                                    self.neighbors[neighbor2.id].lastMessage + messOffset)
 
                     notDirectComm = self.neighbors[neighbor2.id].cid != self.id
                     incomm = self.neighbors[neighbor2.id].incomm
@@ -843,6 +856,48 @@ class MultiAgent:
             artifactString = repr(self.agent.newArtifacts.artifacts).encode('utf-8')
             self.agent.lastArtifact = hashlib.md5(artifactString).hexdigest()
 
+    def deconflictGoals(self):
+        # Get all of the goals into a list
+        goals = self.agent.goals.goals
+
+        if not goals:
+            # Set an empty goal
+            self.agent.goal = Goal()
+        elif len(goals) == 1:
+            # If we only have one potential goal, just go there
+            # May want to consider stopping in place if there is a conflict!
+            self.agent.goal = goals[0]
+        else:
+            # Otherwise, deconflict with neighbor goals
+            # Assume conflict to start
+            conflict = True
+            i = 0
+            while conflict and i < len(goals):
+                # Check each goal in order for conflict with any neighbors
+                gpos = goals[i].pose.pose.position
+                for neighbor in self.neighbors.values():
+                    npos = neighbor.goal.pose.pose.position
+                    # Check whether they are within the defined range
+                    if getDist(gpos, npos) < self.deconflictRadius:
+                        # If our cost is more than the neighbor, don't go to this goal
+                        if goals[i].cost.data > neighbor.goal.cost.data:
+                            conflict = True
+                            print(str(self.id) + " replanning")
+                            # Don't need to check any more neighbors for this goal if conflict
+                            break
+                        else:
+                            conflict = False
+
+                    # No conflict with this neighbor
+                    # If each neighbor has no conflict with this goal, the while loop ends
+                    conflict = False
+
+                # Check the next goal
+                i += 1
+
+            # Set the goal to the last goal without conflict
+            self.agent.goal = goals[i - 1]
+
     def start(self):
         # Wait to start running anything until we've gotten some data and can confirm comms
         # This should also help to recover any beacons being published by other nodes
@@ -917,6 +972,11 @@ class MultiAgent:
                         print(self.id, 'return to report...')
                         self.task_pub.publish('Report')
                         self.home_pub.publish(True)
+                else:
+                    # Find the best goal point to go to and publish
+                    self.deconflictGoals()
+                    self.goal_pub.publish(self.agent.goal.pose)
+                    self.path_pub.publish(self.agent.goal.path)
 
             # If I'm a beacon, don't publish anything!  But keep listening for activate message.
             if self.type == 'beacon' and not self.beacon.active:

@@ -21,6 +21,8 @@ add_message_files(
   BaseMonitor.msg
   AgentMsg.msg
   NeighborMsg.msg
+  Goal.msg
+  GoalArray.msg
 )
 
 generate_messages(

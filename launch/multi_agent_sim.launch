@@ -13,6 +13,8 @@
   <arg name="simcomms" default="true" />
   <!-- Whether to run the agent solo (simulates always in comm with base) -->
   <arg name="solo" default="false" />
+  <!-- Distance between goal points for deconfliction -->
+  <arg name="deconflictRadius" default="2.5" />
   <!-- How long without a message to consider 'lost comms' -->
   <arg name="commThreshold" default="2" />
   <!-- How far to drive from the anchor before automatically dropping a beacon -->
@@ -45,7 +47,9 @@
   <arg name="waitTopic" default="origin_detection_status" />
   <arg name="commTopic" default="base_comm" />
   <arg name="odomTopic" default="odometry" />
-  <arg name="goalTopic" default="node_skeleton/next_turn_pose" />
+  <arg name="goalTopic" default="ma_goal" />
+  <arg name="pathTopic" default="ma_goal_path" />
+  <arg name="goalsTopic" default="goal_array" />
   <arg name="mapTopic" default="merged_map" />
   <arg name="mapSizeTopic" default="merged_size" />
   <arg name="nodeTopic" default="at_a_node" />
@@ -63,6 +67,7 @@
     <param name="monitor" value="$(arg monitor)" />
     <param name="simcomms" value="$(arg simcomms)" />
     <param name="solo" value="$(arg solo)" />
+    <param name="deconflictRadius" value="$(arg deconflictRadius)" />
     <param name="commThreshold" value="$(arg commThreshold)" />
     <param name="anchorDropDist" value="$(arg anchorDropDist)" />
     <param name="dropDist" value="$(arg dropDist)" />
@@ -81,6 +86,8 @@
     <param name="commTopic" value="$(arg commTopic)" />
     <param name="odomTopic" value="$(arg odomTopic)" />
     <param name="goalTopic" value="$(arg goalTopic)" />
+    <param name="pathTopic" value="$(arg pathTopic)" />
+    <param name="goalsTopic" value="$(arg goalsTopic)" />
     <param name="mapTopic" value="$(arg mapTopic)" />
     <param name="mapSizeTopic" value="$(arg mapSizeTopic)" />
     <param name="nodeTopic" value="$(arg nodeTopic)" />
