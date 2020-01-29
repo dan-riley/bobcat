@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
   <!-- Vehicle name for namespace and topic id -->
-  <arg name="vehicle" default="$(env ROS_HOSTNAME)" />
+  <arg name="vehicle" default="Base" />
   <arg name="ns" default="/$(arg vehicle)" />
   <!-- Type of node.  Current options are 'robot' and 'base' -->
-  <arg name="type" default="robot" />
+  <arg name="type" default="base" />
   <!-- Rate to run the node at -->
   <arg name="rate" default="1" />
   <!-- Whether to republish neighbor topics for visualization or other needs -->
-  <arg name="monitor" default="false" />
+  <arg name="monitor" default="true" />
   <!-- Whether to use simulated comms -->
   <arg name="simcomms" default="false" />
   <!-- Whether to run the agent solo (simulates always in comm with base) -->

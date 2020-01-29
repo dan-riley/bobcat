@@ -2,6 +2,9 @@ Header header
 string id
 string cid
 string type
+string status
+string guiTaskName
+string guiTaskValue
 nav_msgs/Odometry odometry
 Goal goal
 octomap_msgs/Octomap map

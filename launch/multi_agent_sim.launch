@@ -47,6 +47,8 @@
   <arg name="waitTopic" default="origin_detection_status" />
   <arg name="commTopic" default="base_comm" />
   <arg name="odomTopic" default="odometry" />
+  <arg name="exploreGoalTopic" default="frontier_goal_pose" />
+  <arg name="explorePathTopic" default="planned_path" />
   <arg name="goalTopic" default="ma_goal" />
   <arg name="pathTopic" default="ma_goal_path" />
   <arg name="goalsTopic" default="goal_array" />
@@ -85,6 +87,8 @@
     <param name="waitTopic" value="$(arg waitTopic)" />
     <param name="commTopic" value="$(arg commTopic)" />
     <param name="odomTopic" value="$(arg odomTopic)" />
+    <param name="exploreGoalTopic" value="$(arg exploreGoalTopic)" />
+    <param name="explorePathTopic" value="$(arg explorePathTopic)" />
     <param name="goalTopic" value="$(arg goalTopic)" />
     <param name="pathTopic" value="$(arg pathTopic)" />
     <param name="goalsTopic" value="$(arg goalsTopic)" />

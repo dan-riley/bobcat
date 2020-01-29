@@ -1,5 +1,8 @@
 string id
 string cid
+string status
+string guiTaskName
+string guiTaskValue
 nav_msgs/Odometry odometry
 Goal goal
 marble_artifact_detection_msgs/ArtifactArray newArtifacts

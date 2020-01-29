@@ -41,7 +41,12 @@ class Agent(object):
         self.id = agent_id
         self.pid = parent_id
         self.cid = ''
+        self.status = ''
+        self.guiTaskName = ''
+        self.guiTaskValue = ''
         self.odometry = Odometry()
+        self.exploreGoal = PoseStamped()
+        self.explorePath = Path()
         self.goal = Goal()
         self.goals = GoalArray()
         self.atnode = Bool()
@@ -69,8 +74,14 @@ class Agent(object):
         """
 
     def update(self, neighbor, offset, updater=False):
+        self.status = neighbor.status
         self.odometry = neighbor.odometry
         self.goal = neighbor.goal
+
+        if neighbor.guiTaskName and neighbor.guiTaskName != self.guiTaskName:
+            self.guiTaskName = neighbor.guiTaskName
+        if neighbor.guiTaskValue and neighbor.guiTaskValue != self.guiTaskValue:
+            self.guiTaskValue = neighbor.guiTaskValue
 
         # Update parameters depending on if we're talking directly or not
         if updater:
@@ -112,6 +123,15 @@ class Base(object):
         self.incomm = True
         self.simcomm = True
         self.commBeacons = BeaconArray()
+        self.map = Octomap()
+        self.mapSize = Float64()
+
+    def update(self, neighbor):
+
+        # Update the map if it's not empty (ie, high bandwidth message)
+        if neighbor.map.data:
+            self.map = neighbor.map
+            self.mapSize = neighbor.mapSize
 
 
 class BeaconObj(object):
@@ -151,6 +171,12 @@ class DataListener:
         self.odom_sub = \
             rospy.Subscriber('/' + self.agent.id + '/' + topics['odometry'],
                              Odometry, self.Receiver, 'odometry', queue_size=1)
+        self.explore_goal_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/' + topics['exploreGoal'],
+                             PoseStamped, self.Receiver, 'exploreGoal', queue_size=1)
+        self.explore_path_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/' + topics['explorePath'],
+                             Path, self.Receiver, 'explorePath', queue_size=1)
         self.goals_sub = \
             rospy.Subscriber('/' + self.agent.id + '/' + topics['goals'],
                              GoalArray, self.Receiver, 'goals', queue_size=1)
@@ -260,6 +286,8 @@ class MultiAgent:
         # Topics for subscribers
         topics = {}
         topics['odometry'] = rospy.get_param('multi_agent/odomTopic', 'odometry')
+        topics['exploreGoal'] = rospy.get_param('multi_agent/exploreGoalTopic', 'frontier_goal_pose')
+        topics['explorePath'] = rospy.get_param('multi_agent/explorePathTopic', 'planned_path')
         topics['goals'] = rospy.get_param('multi_agent/goalsTopic', 'goal_array')
         topics['map'] = rospy.get_param('multi_agent/mapTopic', 'merged_map')
         topics['mapSize'] = rospy.get_param('multi_agent/mapSizeTopic', 'merged_size')
@@ -286,7 +314,6 @@ class MultiAgent:
         self.hislen = self.rate * 10  # How long the odometry history should be
         self.minAnchorDist = 10  # Minimum distance before a beacon is ever dropped
         self.report = False
-        self.status = ''
         self.wait = True
 
         # Zero out the beacons if this is a base station type
@@ -315,13 +342,24 @@ class MultiAgent:
             self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
             self.status_sub = rospy.Subscriber(statusTopic, String, self.StatusMonitor)
 
+            self.pub_guiTask = {}
+            self.pub_guiTask['task'] = self.task_pub
+            self.pub_guiTask['estop'] = rospy.Publisher('estop', Bool, queue_size=10)
+            self.pub_guiTask['estop_cmd'] = rospy.Publisher('estop_cmd', Bool, queue_size=10)
+            self.pub_guiTask['radio_reset_cmd'] = rospy.Publisher('radio_reset_cmd', Bool, queue_size=10)
+
         if self.type == 'beacon':
             self.beacon = BeaconObj(self.id, self.id)
 
         if self.type != 'base':
             # Initialize base station
             self.base = Base()
+            # TODO get rid of the BaseMonitor
             self.base_sub = rospy.Subscriber(baseTopic, BaseMonitor, self.BaseMonitor)
+            subLowTopic = '/Base/' + pubLowTopic
+            subHighTopic = '/Base/' + pubHighTopic
+            self.low_sub['base'] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
+            self.high_sub['base'] = rospy.Subscriber(subHighTopic, AgentMsg, self.CommReceiver)
 
         if self.useSimComms:
             self.comm_sub[self.id] = \
@@ -346,12 +384,23 @@ class MultiAgent:
             if self.useMonitor or self.type == 'base':
                 topic = 'neighbors/' + nid + '/'
                 self.monitor[nid] = {}
+                self.monitor[nid]['status'] = \
+                    rospy.Publisher(topic + 'status', String, queue_size=10)
+                self.monitor[nid]['incomm'] = \
+                    rospy.Publisher(topic + 'incomm', Bool, queue_size=10)
                 self.monitor[nid]['odometry'] = \
                     rospy.Publisher(topic + 'odometry', Odometry, queue_size=10)
                 self.monitor[nid]['goal'] = \
                     rospy.Publisher(topic + 'goal', PoseStamped, queue_size=10)
                 self.monitor[nid]['map'] = \
                     rospy.Publisher(topic + 'map', Octomap, queue_size=10)
+                self.monitor[nid]['artifacts'] = \
+                    rospy.Publisher(topic + 'artifacts', ArtifactArray, queue_size=10)
+                # Monitor GUI commands to send over the network
+                self.monitor[nid]['guiTaskName'] = \
+                    rospy.Subscriber(topic + 'guiTaskName', String, self.GuiTaskNameReceiver, nid)
+                self.monitor[nid]['guiTaskValue'] = \
+                    rospy.Subscriber(topic + 'guiTaskValue', String, self.GuiTaskValueReceiver, nid)
 
         # Get our 'number id' for beacon assignment
         if self.type == 'robot':
@@ -450,11 +499,14 @@ class MultiAgent:
 
     def publishNeighbors(self):
         # Topics for visualization at the anchor node
-        if self.useSimComms:
+        if self.useSimComms or self.useMonitor:
             for neighbor in self.neighbors.values():
+                self.monitor[neighbor.id]['status'].publish(neighbor.status)
+                self.monitor[neighbor.id]['incomm'].publish(neighbor.incomm)
                 self.monitor[neighbor.id]['odometry'].publish(neighbor.odometry)
                 self.monitor[neighbor.id]['goal'].publish(neighbor.goal.pose)
                 self.monitor[neighbor.id]['map'].publish(neighbor.map)
+                self.monitor[neighbor.id]['artifacts'].publish(neighbor.newArtifacts)
 
         self.mbeacon.points = []
         for beacon in self.beacons.values():
@@ -465,12 +517,18 @@ class MultiAgent:
         self.buildArtifactMarkers()
         self.monitor['artifacts'].publish(self.martifact)
 
+    def GuiTaskNameReceiver(self, data, nid):
+        self.neighbors[nid].guiTaskName = data.data
+
+    def GuiTaskValueReceiver(self, data, nid):
+        self.neighbors[nid].guiTaskValue = data.data
+
     def WaitMonitor(self, data):
         if data.status > 0:
             self.wait = False
 
     def StatusMonitor(self, data):
-        self.status = data.data
+        self.agent.status = data.data
 
     def BaseMonitor(self, data):
         # TODO is this still needed?  Just use the Anchor/low_data message?  add lastArtifact to it
@@ -498,6 +556,9 @@ class MultiAgent:
     def buildAgentMessage(self, msg, agent, high):
         msg.id = agent.id
         msg.cid = agent.cid
+        msg.status = agent.status
+        msg.guiTaskName = agent.guiTaskName
+        msg.guiTaskValue = agent.guiTaskValue
         msg.odometry = agent.odometry
         msg.newArtifacts = agent.newArtifacts
         msg.lastMessage.data = agent.lastMessage
@@ -564,6 +625,16 @@ class MultiAgent:
         if self.simcomms and self.id != 'Anchor':
             self.base.simcomm = self.simcomms['Anchor'].incomm
 
+    def publishGUITask(self):
+        if self.agent.guiTaskValue == 'True':
+            data = True
+        elif self.agent.guiTaskValue == 'False':
+            data = False
+        else:
+            data = self.agent.guiTaskValue
+
+        self.pub_guiTask[self.agent.guiTaskName].publish(data)
+
     def CommReceiver(self, data):
         # Approximately account for different system times.  Assumes negligible transmit time.
         offset = rospy.get_rostime() - data.header.stamp
@@ -594,7 +665,8 @@ class MultiAgent:
                 # TODO if we assume all beacons are talking to base then this isn't needed?
         elif data.type == 'base':
             runComm = True
-            notStart = rospy.get_rostime() > rospy.Time(0)
+            notStart = self.base.lastMessage > rospy.Time(0)
+            self.base.update(data)
         elif self.neighbors[data.id].simcomm:
             runComm = True
             notStart = self.neighbors[data.id].lastMessage > rospy.Time(0)
@@ -632,6 +704,13 @@ class MultiAgent:
 
                     if (notStart and (newerMessage and (notDirectComm or not incomm))):
                         self.neighbors[neighbor2.id].update(neighbor2, offset)
+
+                elif data.type == 'base':
+                    if (self.agent.guiTaskName != neighbor2.guiTaskName or
+                            self.agent.guiTaskValue != neighbor2.guiTaskValue):
+                        self.agent.guiTaskName = neighbor2.guiTaskName
+                        self.agent.guiTaskValue = neighbor2.guiTaskValue
+                        self.publishGUITask()
 
     def updateHistory(self):
         self.history.append(self.agent.odometry.pose.pose)
@@ -904,8 +983,8 @@ class MultiAgent:
         # Need to wait for origin detection before we do anything else
         if self.type == 'robot' and not self.useSimComms:
             rospy.sleep(5)
-            while self.wait:
-                rospy.sleep(1)
+            # while self.wait:
+            #     rospy.sleep(1)
 
         rate = rospy.Rate(self.rate)
         while not rospy.is_shutdown():
@@ -962,8 +1041,11 @@ class MultiAgent:
                         # Only change our task if we set it!
                         # TODO need to check the task and task_update topics for changes
                         self.home_pub.publish(False)
-                        if self.status == 'Report':
+                        if self.agent.status == 'Report':
                             self.task_pub.publish('Explore')
+                            self.deconflictGoals()
+                            self.goal_pub.publish(self.agent.goal.pose)
+                            self.path_pub.publish(self.agent.goal.path)
 
                         self.report = False
                         for artifact in self.artifacts.values():
@@ -972,6 +1054,12 @@ class MultiAgent:
                         print(self.id, 'return to report...')
                         self.task_pub.publish('Report')
                         self.home_pub.publish(True)
+                        self.goal_pub.publish(self.agent.exploreGoal)
+                        self.path_pub.publish(self.agent.explorePath)
+                elif self.agent.guiTaskName == 'task' and self.agent.guiTaskValue == 'Home':
+                        self.home_pub.publish(True)
+                        self.goal_pub.publish(self.agent.exploreGoal)
+                        self.path_pub.publish(self.agent.explorePath)
                 else:
                     # Find the best goal point to go to and publish
                     self.deconflictGoals()
@@ -993,6 +1081,12 @@ class MultiAgent:
                     mergeMaps.owners.append(neighbor.id)
                     mergeMaps.sizes.append(neighbor.mapSize.data)
                     mergeMaps.num_octomaps += 1
+
+            if hasattr(self, 'base') and self.base.map.data:
+                mergeMaps.octomaps.append(self.base.map)
+                mergeMaps.owners.append('Base')
+                mergeMaps.sizes.append(self.base.mapSize.data)
+                mergeMaps.num_octomaps += 1
 
             mergeMaps.header.stamp = rospy.get_rostime()
             self.merge_pub.publish(mergeMaps)
