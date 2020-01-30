@@ -30,17 +30,16 @@ from marble_multi_agent.msg import BaseMonitor
 from marble_multi_agent.msg import Goal
 from marble_multi_agent.msg import GoalArray
 from octomap_merger.msg import OctomapArray
-# from msfm3d.msg import Goal
-# from msfm3d.msg import GoalArray
 
 
 class Agent(object):
     """ Data structure to hold pertinent information about other agents """
 
-    def __init__(self, agent_id, parent_id):
+    def __init__(self, agent_id, parent_id, agent_type):
         self.id = agent_id
         self.pid = parent_id
         self.cid = ''
+        self.type = agent_type
         self.status = ''
         self.guiTaskName = ''
         self.guiTaskValue = ''
@@ -165,24 +164,27 @@ class DataListener:
     def __init__(self, agent, topics):
         self.agent = agent  # Agent object
 
-        self.artifact_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/' + topics['artifacts'],
-                             ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
-        self.odom_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/' + topics['odometry'],
-                             Odometry, self.Receiver, 'odometry', queue_size=1)
-        self.explore_goal_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/' + topics['exploreGoal'],
-                             PoseStamped, self.Receiver, 'exploreGoal', queue_size=1)
-        self.explore_path_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/' + topics['explorePath'],
-                             Path, self.Receiver, 'explorePath', queue_size=1)
-        self.goals_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/' + topics['goals'],
-                             GoalArray, self.Receiver, 'goals', queue_size=1)
-        self.node_sub = \
-            rospy.Subscriber('/' + self.agent.id + '/' + topics['node'],
-                             Bool, self.Receiver, 'atnode', queue_size=1)
+        if self.agent.type == 'robot':
+            self.artifact_sub = \
+                rospy.Subscriber('/' + self.agent.id + '/' + topics['artifacts'],
+                                 ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
+            self.odom_sub = \
+                rospy.Subscriber('/' + self.agent.id + '/' + topics['odometry'],
+                                 Odometry, self.Receiver, 'odometry', queue_size=1)
+            self.explore_goal_sub = \
+                rospy.Subscriber('/' + self.agent.id + '/' + topics['exploreGoal'],
+                                 PoseStamped, self.Receiver, 'exploreGoal', queue_size=1)
+            self.explore_path_sub = \
+                rospy.Subscriber('/' + self.agent.id + '/' + topics['explorePath'],
+                                 Path, self.Receiver, 'explorePath', queue_size=1)
+            self.goals_sub = \
+                rospy.Subscriber('/' + self.agent.id + '/' + topics['goals'],
+                                 GoalArray, self.Receiver, 'goals', queue_size=1)
+            self.node_sub = \
+                rospy.Subscriber('/' + self.agent.id + '/' + topics['node'],
+                                 Bool, self.Receiver, 'atnode', queue_size=1)
+
+        # Base and beacons need to publish their maps so they can be merged
         self.map_sub = \
             rospy.Subscriber('/' + self.agent.id + '/' + topics['map'],
                              Octomap, self.Receiver, 'map')
@@ -326,11 +328,11 @@ class MultiAgent:
             self.start_time = rospy.get_rostime()
 
         # Initialize object for our own data
-        self.agent = Agent(self.id, self.id)
+        self.agent = Agent(self.id, self.id, self.type)
+        DataListener(self.agent, topics)
 
         # Setup the internal listeners if we're a robot
         if self.type == 'robot':
-            DataListener(self.agent, topics)
             self.task_pub = rospy.Publisher('task', String, queue_size=10)
             self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
             self.num_pub = rospy.Publisher('num_neighbors', Int8, queue_size=10)
@@ -367,7 +369,7 @@ class MultiAgent:
 
         # Setup the listeners for each neighbor
         for nid in [n for n in neighbors if n != self.id]:
-            self.neighbors[nid] = Agent(nid, self.id)
+            self.neighbors[nid] = Agent(nid, self.id, 'robot')
 
             # Subscribers for the packaged data
             subLowTopic = '/' + nid + '/' + pubLowTopic
@@ -392,6 +394,8 @@ class MultiAgent:
                     rospy.Publisher(topic + 'odometry', Odometry, queue_size=10)
                 self.monitor[nid]['goal'] = \
                     rospy.Publisher(topic + 'goal', PoseStamped, queue_size=10)
+                self.monitor[nid]['path'] = \
+                    rospy.Publisher(topic + 'path', Path, queue_size=10)
                 self.monitor[nid]['map'] = \
                     rospy.Publisher(topic + 'map', Octomap, queue_size=10)
                 self.monitor[nid]['artifacts'] = \
@@ -505,6 +509,7 @@ class MultiAgent:
                 self.monitor[neighbor.id]['incomm'].publish(neighbor.incomm)
                 self.monitor[neighbor.id]['odometry'].publish(neighbor.odometry)
                 self.monitor[neighbor.id]['goal'].publish(neighbor.goal.pose)
+                self.monitor[neighbor.id]['path'].publish(neighbor.goal.path)
                 self.monitor[neighbor.id]['map'].publish(neighbor.map)
                 self.monitor[neighbor.id]['artifacts'].publish(neighbor.newArtifacts)
 
@@ -562,11 +567,7 @@ class MultiAgent:
         msg.odometry = agent.odometry
         msg.newArtifacts = agent.newArtifacts
         msg.lastMessage.data = agent.lastMessage
-
-        # Build the goal message without sending the path as well
-        msg.goal = Goal()
-        msg.goal.pose = agent.goal.pose
-        msg.goal.cost = agent.goal.cost
+        msg.goal = agent.goal
 
         # Data that's only sent via direct comms
         if agent.id == self.id:
@@ -618,12 +619,12 @@ class MultiAgent:
         for simcomm in self.simcomms.values():
             if 'B' in simcomm.id and simcomm.id in self.beacons:
                 self.beacons[simcomm.id].simcomm = simcomm.incomm
-            elif simcomm.id != 'Anchor' and simcomm.id in self.neighbors:
+            elif simcomm.id != 'Base' and simcomm.id in self.neighbors:
                 self.neighbors[simcomm.id].simcomm = simcomm.incomm
 
         # Base comms are whatever our status with the anchor is
-        if self.simcomms and self.id != 'Anchor':
-            self.base.simcomm = self.simcomms['Anchor'].incomm
+        if self.simcomms and self.id != 'Base':
+            self.base.simcomm = self.simcomms['Base'].incomm
 
     def publishGUITask(self):
         if self.agent.guiTaskValue == 'True':
@@ -977,6 +978,14 @@ class MultiAgent:
             # Set the goal to the last goal without conflict
             self.agent.goal = goals[i - 1]
 
+    def goHome(self, reason):
+        self.task_pub.publish(reason)
+        self.home_pub.publish(True)
+        self.goal_pub.publish(self.agent.exploreGoal)
+        self.path_pub.publish(self.agent.explorePath)
+        self.agent.goal.pose = self.agent.exploreGoal
+        self.agent.goal.path = self.agent.explorePath
+
     def start(self):
         # Wait to start running anything until we've gotten some data and can confirm comms
         # This should also help to recover any beacons being published by other nodes
@@ -1052,15 +1061,11 @@ class MultiAgent:
                             artifact.reported = True
                     else:
                         print(self.id, 'return to report...')
-                        self.task_pub.publish('Report')
-                        self.home_pub.publish(True)
-                        self.goal_pub.publish(self.agent.exploreGoal)
-                        self.path_pub.publish(self.agent.explorePath)
+                        self.goHome('Report')
                 elif self.agent.guiTaskName == 'task' and self.agent.guiTaskValue == 'Home':
-                        self.home_pub.publish(True)
-                        self.goal_pub.publish(self.agent.exploreGoal)
-                        self.path_pub.publish(self.agent.explorePath)
+                        self.goHome('Home')
                 else:
+                    self.home_pub.publish(False)
                     # Find the best goal point to go to and publish
                     self.deconflictGoals()
                     self.goal_pub.publish(self.agent.goal.pose)
