@@ -43,6 +43,7 @@ class Agent(object):
         self.status = ''
         self.guiTaskName = ''
         self.guiTaskValue = ''
+        self.guiAccept = True
         self.odometry = Odometry()
         self.exploreGoal = PoseStamped()
         self.explorePath = Path()
@@ -79,8 +80,10 @@ class Agent(object):
 
         if neighbor.guiTaskName and neighbor.guiTaskName != self.guiTaskName:
             self.guiTaskName = neighbor.guiTaskName
+            self.guiAccept = True
         if neighbor.guiTaskValue and neighbor.guiTaskValue != self.guiTaskValue:
             self.guiTaskValue = neighbor.guiTaskValue
+            self.guiAccept = True
 
         # Update parameters depending on if we're talking directly or not
         if updater:
@@ -140,8 +143,17 @@ class BeaconObj(object):
         self.id = agent
         self.owner = owner
         self.pos = Point()
-        self.simcomm = True
+        self.simcomm = False
         self.active = False
+        self.map = Octomap()
+        self.mapSize = Float64()
+
+    def update(self, neighbor):
+
+        # Update the map if it's not empty (ie, high bandwidth message)
+        if neighbor.map.data:
+            self.map = neighbor.map
+            self.mapSize = neighbor.mapSize
 
 
 class ArtifactReport:
@@ -664,6 +676,7 @@ class MultiAgent:
                 notStart = rospy.get_rostime() > rospy.Time(0)
                 # Need to figure out how to update commBeacons on self if received from a beacon!
                 # TODO if we assume all beacons are talking to base then this isn't needed?
+                self.beacons[data.id].update(data)
         elif data.type == 'base':
             runComm = True
             notStart = self.base.lastMessage > rospy.Time(0)
@@ -711,6 +724,7 @@ class MultiAgent:
                             self.agent.guiTaskValue != neighbor2.guiTaskValue):
                         self.agent.guiTaskName = neighbor2.guiTaskName
                         self.agent.guiTaskValue = neighbor2.guiTaskValue
+                        self.agent.guiAccept = True
                         self.publishGUITask()
 
     def updateHistory(self):
@@ -1017,8 +1031,13 @@ class MultiAgent:
                 # Update our comm status for anyone who needs it
                 self.comm_pub.publish(self.base.incomm)
 
-                # Check if we need to drop a beacon
-                self.beaconCheck()
+                # Check if we need to drop a beacon either due to GUI or autonomous
+                if (self.agent.guiAccept and self.agent.guiTaskName == 'task' and
+                        self.agent.guiTaskValue == 'Deploy'):
+                    self.deployBeacon(True, 'GUI Command')
+                    self.agent.guiAccept = False
+                else:
+                    self.beaconCheck()
 
                 num_neighbors = 0
                 # Time check for "current" neighbors.  Make sure we don't have negative time.
@@ -1077,7 +1096,6 @@ class MultiAgent:
                 continue
 
             # Publish the neighbor maps so merge node can merge with our map
-            # TODO may need to change this for beacons and anchor since they don't have their own map
             mergeMaps = OctomapArray()
             mergeMaps.num_octomaps = 0
             for neighbor in self.neighbors.values():
@@ -1085,6 +1103,13 @@ class MultiAgent:
                     mergeMaps.octomaps.append(neighbor.map)
                     mergeMaps.owners.append(neighbor.id)
                     mergeMaps.sizes.append(neighbor.mapSize.data)
+                    mergeMaps.num_octomaps += 1
+
+            for beacon in self.beacons.values():
+                if beacon.map.data:
+                    mergeMaps.octomaps.append(beacon.map)
+                    mergeMaps.owners.append(beacon.id)
+                    mergeMaps.sizes.append(beacon.mapSize.data)
                     mergeMaps.num_octomaps += 1
 
             if hasattr(self, 'base') and self.base.map.data:
