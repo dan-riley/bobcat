@@ -52,6 +52,8 @@ class Agent(object):
         self.atnode = Bool()
         self.map = Octomap()
         self.mapSize = Float64()
+        self.travMap = Octomap()
+        self.travMapSize = Float64()
         self.commBeacons = BeaconArray()
         self.newArtifacts = ArtifactArray()
         self.artifacts = {}
@@ -97,6 +99,8 @@ class Agent(object):
             if neighbor.map.data:
                 self.map = neighbor.map
                 self.mapSize = neighbor.mapSize
+                self.travMap = neighbor.travMap
+                self.travMapSize = neighbor.travMapSize
                 self.lastHighMessage = self.lastMessage
         else:
             self.cid = neighbor.cid
@@ -127,6 +131,8 @@ class Base(object):
         self.commBeacons = BeaconArray()
         self.map = Octomap()
         self.mapSize = Float64()
+        self.travMap = Octomap()
+        self.travMapSize = Float64()
 
     def update(self, neighbor):
 
@@ -134,6 +140,8 @@ class Base(object):
         if neighbor.map.data:
             self.map = neighbor.map
             self.mapSize = neighbor.mapSize
+            self.travMap = neighbor.travMap
+            self.travMapSize = neighbor.travMapSize
 
 
 class BeaconObj(object):
@@ -147,6 +155,8 @@ class BeaconObj(object):
         self.active = False
         self.map = Octomap()
         self.mapSize = Float64()
+        self.travMap = Octomap()
+        self.travMapSize = Float64()
 
     def update(self, neighbor):
 
@@ -154,6 +164,8 @@ class BeaconObj(object):
         if neighbor.map.data:
             self.map = neighbor.map
             self.mapSize = neighbor.mapSize
+            self.travMap = neighbor.travMap
+            self.travMapSize = neighbor.travMapSize
 
 
 class ArtifactReport:
@@ -203,6 +215,12 @@ class DataListener:
         self.size_sub = \
             rospy.Subscriber('/' + self.agent.id + '/' + topics['mapSize'],
                              Float64, self.Receiver, 'mapSize')
+        self.trav_map_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/' + topics['travMap'],
+                             Octomap, self.Receiver, 'travMap')
+        self.trav_size_sub = \
+            rospy.Subscriber('/' + self.agent.id + '/' + topics['travMapSize'],
+                             Float64, self.Receiver, 'travMapSize')
 
     def Receiver(self, data, parameter):
         setattr(self.agent, parameter, data)
@@ -305,6 +323,8 @@ class MultiAgent:
         topics['goals'] = rospy.get_param('multi_agent/goalsTopic', 'goal_array')
         topics['map'] = rospy.get_param('multi_agent/mapTopic', 'merged_map')
         topics['mapSize'] = rospy.get_param('multi_agent/mapSizeTopic', 'merged_size')
+        topics['travMap'] = rospy.get_param('multi_agent/travMapTopic', 'merged_traversability_map')
+        topics['travMapSize'] = rospy.get_param('multi_agent/travMapSizeTopic', 'merged_traversability_size')
         topics['node'] = rospy.get_param('multi_agent/nodeTopic', 'at_node_center')
         topics['artifacts'] = rospy.get_param('multi_agent/artifactsTopic', 'artifact_array/relay')
 
@@ -410,6 +430,8 @@ class MultiAgent:
                     rospy.Publisher(topic + 'path', Path, queue_size=10)
                 self.monitor[nid]['map'] = \
                     rospy.Publisher(topic + 'map', Octomap, queue_size=10)
+                self.monitor[nid]['travMap'] = \
+                    rospy.Publisher(topic + 'traversability_map', Octomap, queue_size=10)
                 self.monitor[nid]['artifacts'] = \
                     rospy.Publisher(topic + 'artifacts', ArtifactArray, queue_size=10)
                 # Monitor GUI commands to send over the network
@@ -449,6 +471,7 @@ class MultiAgent:
                     rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
 
         self.merge_pub = rospy.Publisher('neighbor_maps', OctomapArray, queue_size=1)
+        self.merge_trav_pub = rospy.Publisher('neighbor_traversability_maps', OctomapArray, queue_size=1)
 
         # Publishers for the packaged data.  If we need to use custom publishers for each
         # neighbor we're talking to, then this has to moved above in the neighbor loop
@@ -523,6 +546,7 @@ class MultiAgent:
                 self.monitor[neighbor.id]['goal'].publish(neighbor.goal.pose)
                 self.monitor[neighbor.id]['path'].publish(neighbor.goal.path)
                 self.monitor[neighbor.id]['map'].publish(neighbor.map)
+                self.monitor[neighbor.id]['travMap'].publish(neighbor.travMap)
                 self.monitor[neighbor.id]['artifacts'].publish(neighbor.newArtifacts)
 
         self.mbeacon.points = []
@@ -588,9 +612,11 @@ class MultiAgent:
             # TODO this isn't going to work.  Need to figure it out.
             # Think this is fine if we assume beacons always talk to base?
             msg.mapSize = self.agent.mapSize
+            msg.travMapSize = self.agent.travMapSize
             # Only add the map data if we're handling high bandwidth
             if high:
                 msg.map = agent.map
+                msg.travMap = agent.travMap
                 msg.lastMessage.data = agent.lastHighMessage
 
     def CommCheck(self):
@@ -1120,6 +1146,31 @@ class MultiAgent:
 
             mergeMaps.header.stamp = rospy.get_rostime()
             self.merge_pub.publish(mergeMaps)
+
+            mergeTravMaps = OctomapArray()
+            mergeTravMaps.num_octomaps = 0
+            for neighbor in self.neighbors.values():
+                if neighbor.travMap.data:
+                    mergeTravMaps.octomaps.append(neighbor.travMap)
+                    mergeTravMaps.owners.append(neighbor.id)
+                    mergeTravMaps.sizes.append(neighbor.travMapSize.data)
+                    mergeTravMaps.num_octomaps += 1
+
+            for beacon in self.beacons.values():
+                if beacon.travMap.data:
+                    mergeTravMaps.octomaps.append(beacon.travMap)
+                    mergeTravMaps.owners.append(beacon.id)
+                    mergeTravMaps.sizes.append(beacon.travMapSize.data)
+                    mergeTravMaps.num_octomaps += 1
+
+            if hasattr(self, 'base') and self.base.travMap.data:
+                mergeTravMaps.octomaps.append(self.base.travMap)
+                mergeTravMaps.owners.append('Base')
+                mergeTravMaps.sizes.append(self.base.travMapSize.data)
+                mergeTravMaps.num_octomaps += 1
+
+            mergeTravMaps.header.stamp = rospy.get_rostime()
+            self.merge_trav_pub.publish(mergeTravMaps)
 
             # Publish our data!  Publishing both low and high bandwidth so low doesn't depend
             # on the high bandwidth getting through

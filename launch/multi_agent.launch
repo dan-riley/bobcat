@@ -54,6 +54,8 @@
   <arg name="goalsTopic" default="goal_array" />
   <arg name="mapTopic" default="merged_map" />
   <arg name="mapSizeTopic" default="merged_size" />
+  <arg name="travMapTopic" default="merged_traversability_map" />
+  <arg name="travMapSizeTopic" default="merged_traversability_size" />
   <arg name="nodeTopic" default="at_node_center" />
   <arg name="artifactsTopic" default="artifact_array/relay" />
   <!-- Approximate location of anchor node, for first beacon drop distance calc -->
@@ -94,6 +96,8 @@
     <param name="goalsTopic" value="$(arg goalsTopic)" />
     <param name="mapTopic" value="$(arg mapTopic)" />
     <param name="mapSizeTopic" value="$(arg mapSizeTopic)" />
+    <param name="travMapTopic" value="$(arg travMapTopic)" />
+    <param name="travMapSizeTopic" value="$(arg travMapSizeTopic)" />
     <param name="nodeTopic" value="$(arg nodeTopic)" />
     <param name="artifactsTopic" value="$(arg artifactsTopic)" />
     <param name="anchorX" value="$(arg anchorX)" />

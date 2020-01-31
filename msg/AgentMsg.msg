@@ -9,6 +9,8 @@ nav_msgs/Odometry odometry
 Goal goal
 octomap_msgs/Octomap map
 std_msgs/Float64 mapSize
+octomap_msgs/Octomap travMap
+std_msgs/Float64 travMapSize
 BeaconArray commBeacons
 marble_artifact_detection_msgs/ArtifactArray newArtifacts
 std_msgs/Time lastMessage
