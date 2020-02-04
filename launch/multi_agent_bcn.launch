@@ -6,13 +6,15 @@
   <!-- Type of node.  Current options are 'robot' and 'base' -->
   <arg name="type" default="beacon" />
   <!-- Rate to run the node at -->
-  <arg name="rate" default="1" />
+  <arg name="rate" default="0.5" />
   <!-- Whether to republish neighbor topics for visualization or other needs -->
   <arg name="monitor" default="false" />
   <!-- Whether to use simulated comms -->
   <arg name="simcomms" default="false" />
   <!-- Whether to run the agent solo (simulates always in comm with base) -->
   <arg name="solo" default="false" />
+  <!-- Distance between goal points for deconfliction -->
+  <arg name="deconflictRadius" default="2.5" />
   <!-- How long without a message to consider 'lost comms' -->
   <arg name="commThreshold" default="2" />
   <!-- How far to drive from the anchor before automatically dropping a beacon -->
@@ -26,15 +28,17 @@
   <!-- Whether to delay beacon deployment so the trailing robot can drop instead -->
   <arg name="delayDrop" default="false" />
   <!-- How many beacons this agent is carrying.  Ignored for 'base' type. -->
-  <arg name="numBeacons" default="16" />
+  <arg name="numBeacons" default="4" />
   <!-- Total number of beacons across all deployed agents.  Higher is ok. -->
-  <arg name="totalBeacons" default="48" />
+  <arg name="totalBeacons" default="16" />
   <!-- List of all potentially deployed neighbors.  Determines what topics are subscribed. -->
-  <arg name="potentialNeighbors" default="H01,H02,H03" />
+  <arg name="potentialNeighbors" default="H01,H02,H03,T01,T02" />
   <!-- Topic to publish/subscribe low bandwidth data to neighbors -->
   <arg name="pubLowTopic" default="low_data" />
   <!-- Topic to publish/subscribe high bandwidth data to neighbors -->
   <arg name="pubHighTopic" default="high_data" />
+  <!-- Topic the frontier exploration node listens to to calculate path home -->
+  <arg name="homeTopic" default="report_artifact" />
   <!-- Topic to monitor from base station to ensure we're in comm -->
   <arg name="baseTopic" default="/Base/ma_status" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
@@ -42,8 +46,12 @@
   <arg name="statusTopic" default="task_update" />
   <arg name="waitTopic" default="origin_detection_status" />
   <arg name="commTopic" default="base_comm" />
-  <arg name="odomTopic" default="odometry" />
-  <arg name="goalTopic" default="node_skeleton/next_turn_pose" />
+  <arg name="odomTopic" default="odometry_map" />
+  <arg name="exploreGoalTopic" default="frontier_goal_pose" />
+  <arg name="explorePathTopic" default="planned_path" />
+  <arg name="goalTopic" default="ma_goal" />
+  <arg name="pathTopic" default="ma_goal_path" />
+  <arg name="goalsTopic" default="goal_array" />
   <arg name="mapTopic" default="merged_map" />
   <arg name="mapSizeTopic" default="merged_size" />
   <arg name="travMapTopic" default="merged_traversability_map" />
@@ -63,6 +71,7 @@
     <param name="monitor" value="$(arg monitor)" />
     <param name="simcomms" value="$(arg simcomms)" />
     <param name="solo" value="$(arg solo)" />
+    <param name="deconflictRadius" value="$(arg deconflictRadius)" />
     <param name="commThreshold" value="$(arg commThreshold)" />
     <param name="anchorDropDist" value="$(arg anchorDropDist)" />
     <param name="dropDist" value="$(arg dropDist)" />
@@ -74,18 +83,24 @@
     <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
     <param name="pubLowTopic" value="$(arg pubLowTopic)" />
     <param name="pubHighTopic" value="$(arg pubHighTopic)" />
+    <param name="homeTopic" value="$(arg homeTopic)" />
     <param name="baseTopic" value="$(arg baseTopic)" />
     <param name="stopTopic" value="$(arg stopTopic)" />
     <param name="waitTopic" value="$(arg waitTopic)" />
     <param name="commTopic" value="$(arg commTopic)" />
     <param name="odomTopic" value="$(arg odomTopic)" />
+    <param name="exploreGoalTopic" value="$(arg exploreGoalTopic)" />
+    <param name="explorePathTopic" value="$(arg explorePathTopic)" />
     <param name="goalTopic" value="$(arg goalTopic)" />
+    <param name="pathTopic" value="$(arg pathTopic)" />
+    <param name="goalsTopic" value="$(arg goalsTopic)" />
     <param name="mapTopic" value="$(arg mapTopic)" />
     <param name="mapSizeTopic" value="$(arg mapSizeTopic)" />
     <param name="travMapTopic" value="$(arg travMapTopic)" />
     <param name="travMapSizeTopic" value="$(arg travMapSizeTopic)" />
     <param name="nodeTopic" value="$(arg nodeTopic)" />
-    <param name="artifactsTopic" value="$(arg artifactsTopic)" />    <param name="anchorX" value="$(arg anchorX)" />
+    <param name="artifactsTopic" value="$(arg artifactsTopic)" />
+    <param name="anchorX" value="$(arg anchorX)" />
     <param name="anchorY" value="$(arg anchorY)" />
     <param name="anchorZ" value="$(arg anchorZ)" />
   </node>

@@ -1,0 +1,31 @@
+<launch>
+  <node name="master_discovery" pkg="fkie_master_discovery" type="master_discovery" output="screen">
+        <param name = "interface" value="subt-beacon2" />
+        <param name = "mcast_group" value="224.0.0.1"/>
+        <param name = "remove_after" value="300"/>
+        <param name = "active_request_after" value="60"/>
+        <param name = "heartbeat_hz" value="10"/>
+  </node>
+
+  <node name="master_sync" pkg="fkie_master_sync" type="master_sync" output="screen">
+        <rosparam param="sync_topics">
+          [
+
+            '*/odometry',
+
+            '*/Base/ma_status',
+            '*/beacons',
+            '*/low_data',
+            '*/high_data',
+
+          ]
+        </rosparam>
+        <rosparam param="ignore_hosts"> [''] </rosparam>
+        <rosparam param="ignore_nodes"> [''] </rosparam>
+        <rosparam param="resync_on_reconnect_timeout"> 0 </rosparam>
+  </node>
+ 
+  <include file="$(find octomap_merger)/launch/octomap_merger.launch" />
+  <include file="$(find octomap_merger)/launch/octomap_merger_traversability.launch" />
+  <include file="$(find marble_multi_agent)/launch/multi_agent_bcn.launch" />
+</launch>

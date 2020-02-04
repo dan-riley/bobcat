@@ -32,7 +32,7 @@
   <!-- Total number of beacons across all deployed agents.  Higher is ok. -->
   <arg name="totalBeacons" default="16" />
   <!-- List of all potentially deployed neighbors.  Determines what topics are subscribed. -->
-  <arg name="potentialNeighbors" default="H01,H02,H03" />
+  <arg name="potentialNeighbors" default="H01,H02,H03,T01,T02" />
   <!-- Topic to publish/subscribe low bandwidth data to neighbors -->
   <arg name="pubLowTopic" default="low_data" />
   <!-- Topic to publish/subscribe high bandwidth data to neighbors -->
@@ -46,7 +46,7 @@
   <arg name="statusTopic" default="task_update" />
   <arg name="waitTopic" default="origin_detection_status" />
   <arg name="commTopic" default="base_comm" />
-  <arg name="odomTopic" default="odometry" />
+  <arg name="odomTopic" default="odometry_map" />
   <arg name="exploreGoalTopic" default="frontier_goal_pose" />
   <arg name="explorePathTopic" default="planned_path" />
   <arg name="goalTopic" default="ma_goal" />
