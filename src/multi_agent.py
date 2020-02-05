@@ -298,12 +298,13 @@ class MultiAgent:
         self.turnDetect = rospy.get_param('multi_agent/turnDetect', True)
         # Whether this agent should delay their drop so the trailing robot can
         self.delayDrop = rospy.get_param('multi_agent/delayDrop', False)
-        # Number of beacons this robot is carrying
-        self.numBeacons = rospy.get_param('multi_agent/numBeacons', 16)
         # Total number of potential beacons
-        totalBeacons = rospy.get_param('multi_agent/totalBeacons', 48)
+        totalBeacons = rospy.get_param('multi_agent/totalBeacons', 16)
         # Potential robot neighbors to monitor
         neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'H01,H02,H03').split(',')
+        # Beacons this robot is carrying
+        myBeacons = rospy.get_param('multi_agent/myBeacons', 'B01,B02,B03,B04').split(',')
+        self.numBeacons = len(myBeacons)
         # Topics for publishers
         pubLowTopic = rospy.get_param('multi_agent/pubLowTopic', 'low_data')
         pubHighTopic = rospy.get_param('multi_agent/pubHighTopic', 'high_data')
@@ -349,10 +350,6 @@ class MultiAgent:
         self.minAnchorDist = 10  # Minimum distance before a beacon is ever dropped
         self.report = False
         self.wait = True
-
-        # Zero out the beacons if this is a base station type
-        if self.type == 'base':
-            self.numBeacons = 0
 
         rospy.init_node(self.id + '_multi_agent')
         self.start_time = rospy.get_rostime()
@@ -440,21 +437,13 @@ class MultiAgent:
                 self.monitor[nid]['guiTaskValue'] = \
                     rospy.Subscriber(topic + 'guiTaskValue', String, self.GuiTaskValueReceiver, nid)
 
-        # Get our 'number id' for beacon assignment
-        if self.type == 'robot':
-            try:
-                sid = int(self.id[-2:])
-            except ValueError:
-                sid = int(self.id[-1])
-        else:
-            sid = 0
-
         # Setup the beacons.  For real robots the names shouldn't matter as long as consistent
         for i in range(1, totalBeacons + 1):
-            nid = 'B' + str(i)
+            prefix = '0' if i < 10 else ''
+            nid = 'B' + prefix + str(i)
 
             # Determine if this agent 'owns' the beacon so we don't have conflicting names
-            owner = i <= sid * self.numBeacons and i > (sid - 1) * self.numBeacons
+            owner = True if nid in myBeacons else False
 
             self.beacons[nid] = BeaconObj(nid, owner)
 
