@@ -81,7 +81,6 @@
     <param name="junctionDist" value="$(arg junctionDist)" />
     <param name="turnDetect" value="$(arg turnDetect)" />
     <param name="delayDrop" value="$(arg delayDrop)" />
-    <param name="numBeacons" value="$(arg numBeacons)" />
     <param name="pubLowTopic" value="$(arg pubLowTopic)" />
     <param name="pubHighTopic" value="$(arg pubHighTopic)" />
     <param name="homeTopic" value="$(arg homeTopic)" />
