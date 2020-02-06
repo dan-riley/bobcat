@@ -46,7 +46,7 @@
   <arg name="statusTopic" default="task_update" />
   <arg name="waitTopic" default="origin_detection_status" />
   <arg name="commTopic" default="base_comm" />
-  <arg name="odomTopic" default="odometry_map" />
+  <arg name="odomTopic" default="odometry" />
   <arg name="exploreGoalTopic" default="frontier_goal_pose" />
   <arg name="explorePathTopic" default="planned_path" />
   <arg name="goalTopic" default="ma_goal" />

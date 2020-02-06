@@ -43,7 +43,9 @@ class Agent(object):
         self.status = ''
         self.guiTaskName = ''
         self.guiTaskValue = ''
+        self.guiGoalPoint = PoseStamped()
         self.guiAccept = True
+        self.guiGoalAccept = True
         self.odometry = Odometry()
         self.exploreGoal = PoseStamped()
         self.explorePath = Path()
@@ -86,6 +88,9 @@ class Agent(object):
         if neighbor.guiTaskValue and neighbor.guiTaskValue != self.guiTaskValue:
             self.guiTaskValue = neighbor.guiTaskValue
             self.guiAccept = True
+        if neighbor.guiGoalPoint and neighbor.guiGoalPoint != self.guiGoalPoint:
+            self.guiGoalPoint = neighbor.guiGoalPoint
+            self.guiGoalAccept = True
 
         # Update parameters depending on if we're talking directly or not
         if updater:
@@ -378,6 +383,7 @@ class MultiAgent:
             self.pub_guiTask['estop'] = rospy.Publisher('estop', Bool, queue_size=10)
             self.pub_guiTask['estop_cmd'] = rospy.Publisher('estop_cmd', Bool, queue_size=10)
             self.pub_guiTask['radio_reset_cmd'] = rospy.Publisher('radio_reset_cmd', Bool, queue_size=10)
+            self.pub_guiGoal = rospy.Publisher('guiGoalPoint', PoseStamped, queue_size=10)
 
         if self.type == 'beacon':
             self.beacon = BeaconObj(self.id, self.id)
@@ -436,6 +442,9 @@ class MultiAgent:
                     rospy.Subscriber(topic + 'guiTaskName', String, self.GuiTaskNameReceiver, nid)
                 self.monitor[nid]['guiTaskValue'] = \
                     rospy.Subscriber(topic + 'guiTaskValue', String, self.GuiTaskValueReceiver, nid)
+                self.monitor[nid]['guiGoalPoint'] = \
+                    rospy.Subscriber(topic + 'guiGoalPoint', PoseStamped, self.GuiGoalReceiver, nid)
+
 
         # Setup the beacons.  For real robots the names shouldn't matter as long as consistent
         for i in range(1, totalBeacons + 1):
@@ -553,6 +562,10 @@ class MultiAgent:
     def GuiTaskValueReceiver(self, data, nid):
         self.neighbors[nid].guiTaskValue = data.data
 
+    def GuiGoalReceiver(self, data, nid):
+        self.neighbors[nid].guiGoalPoint.header.frame_id = 'world'
+        self.neighbors[nid].guiGoalPoint.pose = data.pose
+
     def WaitMonitor(self, data):
         if data.status > 0:
             self.wait = False
@@ -589,6 +602,7 @@ class MultiAgent:
         msg.status = agent.status
         msg.guiTaskName = agent.guiTaskName
         msg.guiTaskValue = agent.guiTaskValue
+        msg.guiGoalPoint = agent.guiGoalPoint
         msg.odometry = agent.odometry
         msg.newArtifacts = agent.newArtifacts
         msg.lastMessage.data = agent.lastMessage
@@ -741,6 +755,9 @@ class MultiAgent:
                         self.agent.guiTaskValue = neighbor2.guiTaskValue
                         self.agent.guiAccept = True
                         self.publishGUITask()
+                    if self.agent.guiGoalPoint != neighbor2.guiGoalPoint:
+                        self.agent.guiGoalPoint = neighbor2.guiGoalPoint
+                        self.agent.guiGoalAccept = True
 
     def updateHistory(self):
         self.history.append(self.agent.odometry.pose.pose)
@@ -1007,9 +1024,12 @@ class MultiAgent:
             # Set the goal to the last goal without conflict
             self.agent.goal = goals[i - 1]
 
-    def goHome(self, reason):
+    def setGoalPoint(self, reason):
+        if reason == 'guiCommand':
+            self.pub_guiGoal.publish(self.agent.guiGoalPoint)
+        else:
+            self.home_pub.publish(True)
         self.task_pub.publish(reason)
-        self.home_pub.publish(True)
         self.goal_pub.publish(self.agent.exploreGoal)
         self.path_pub.publish(self.agent.explorePath)
         self.agent.goal.pose = self.agent.exploreGoal
@@ -1095,11 +1115,14 @@ class MultiAgent:
                             artifact.reported = True
                     else:
                         print(self.id, 'return to report...')
-                        self.goHome('Report')
+                        self.setGoalPoint('Report')
                 elif self.agent.guiTaskName == 'task' and self.agent.guiTaskValue == 'Home':
-                        self.goHome('Home')
+                    self.setGoalPoint('Home')
+                elif self.agent.guiGoalAccept and self.agent.guiGoalPoint:
+                    self.setGoalPoint('guiCommand')
                 else:
                     self.home_pub.publish(False)
+                    self.task_pub.publish('Explore')
                     # Find the best goal point to go to and publish
                     self.deconflictGoals()
                     self.goal_pub.publish(self.agent.goal.pose)

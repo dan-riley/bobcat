@@ -5,6 +5,7 @@ string type
 string status
 string guiTaskName
 string guiTaskValue
+geometry_msgs/PoseStamped guiGoalPoint
 nav_msgs/Odometry odometry
 Goal goal
 octomap_msgs/Octomap map
