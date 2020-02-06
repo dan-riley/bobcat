@@ -26,7 +26,7 @@
   <!-- How far to drive from the anchor before automatically dropping a beacon -->
   <arg name="anchorDropDist" default="100" />
   <!-- How far to drive before automatically dropping a beacon -->
-  <arg name="dropDist" default="30" />
+  <arg name="dropDist" default="100" />
   <!-- Minimum distance between nodes before dropping another beacon -->
   <arg name="junctionDist" default="10" />
   <!-- Whether to use turn detection to drop beacons -->

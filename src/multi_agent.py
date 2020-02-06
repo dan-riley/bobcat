@@ -12,6 +12,7 @@ from std_msgs.msg import String
 from nav_msgs.msg import Odometry
 from nav_msgs.msg import Path
 from geometry_msgs.msg import Point
+from geometry_msgs.msg import Pose
 from geometry_msgs.msg import PoseStamped
 from visualization_msgs.msg import Marker
 from visualization_msgs.msg import MarkerArray
@@ -45,7 +46,7 @@ class Agent(object):
         self.guiTaskValue = ''
         self.guiGoalPoint = PoseStamped()
         self.guiAccept = True
-        self.guiGoalAccept = True
+        self.guiGoalAccept = False
         self.odometry = Odometry()
         self.exploreGoal = PoseStamped()
         self.explorePath = Path()
@@ -88,7 +89,7 @@ class Agent(object):
         if neighbor.guiTaskValue and neighbor.guiTaskValue != self.guiTaskValue:
             self.guiTaskValue = neighbor.guiTaskValue
             self.guiAccept = True
-        if neighbor.guiGoalPoint and neighbor.guiGoalPoint != self.guiGoalPoint:
+        if neighbor.guiGoalPoint != self.guiGoalPoint:
             self.guiGoalPoint = neighbor.guiGoalPoint
             self.guiGoalAccept = True
 
@@ -443,8 +444,7 @@ class MultiAgent:
                 self.monitor[nid]['guiTaskValue'] = \
                     rospy.Subscriber(topic + 'guiTaskValue', String, self.GuiTaskValueReceiver, nid)
                 self.monitor[nid]['guiGoalPoint'] = \
-                    rospy.Subscriber(topic + 'guiGoalPoint', PoseStamped, self.GuiGoalReceiver, nid)
-
+                    rospy.Subscriber(topic + 'guiGoalPoint', Pose, self.GuiGoalReceiver, nid)
 
         # Setup the beacons.  For real robots the names shouldn't matter as long as consistent
         for i in range(1, totalBeacons + 1):
@@ -564,7 +564,7 @@ class MultiAgent:
 
     def GuiGoalReceiver(self, data, nid):
         self.neighbors[nid].guiGoalPoint.header.frame_id = 'world'
-        self.neighbors[nid].guiGoalPoint.pose = data.pose
+        self.neighbors[nid].guiGoalPoint.pose = data
 
     def WaitMonitor(self, data):
         if data.status > 0:
@@ -1118,8 +1118,15 @@ class MultiAgent:
                         self.setGoalPoint('Report')
                 elif self.agent.guiTaskName == 'task' and self.agent.guiTaskValue == 'Home':
                     self.setGoalPoint('Home')
-                elif self.agent.guiGoalAccept and self.agent.guiGoalPoint:
-                    self.setGoalPoint('guiCommand')
+                elif self.agent.guiGoalAccept:
+                    if (getDist(self.agent.odometry.pose.pose.position,
+                                self.agent.guiGoalPoint.pose.position) < 2.0):
+                        print(self.id, 'Resuming exploration...')
+                        self.task_pub.publish('Explore')
+                        self.agent.guiGoalAccept = False
+                    else:
+                        print(self.id, 'setting GUI Goal Point...')
+                        self.setGoalPoint('guiCommand')
                 else:
                     self.home_pub.publish(False)
                     self.task_pub.publish('Explore')
