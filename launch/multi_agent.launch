@@ -43,7 +43,6 @@
   <arg name="baseTopic" default="/Base/ma_status" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
   <arg name="stopTopic" default="stop_for_beacon_drop" />
-  <arg name="statusTopic" default="task_update" />
   <arg name="waitTopic" default="origin_detection_status" />
   <arg name="commTopic" default="base_comm" />
   <arg name="odomTopic" default="odometry" />

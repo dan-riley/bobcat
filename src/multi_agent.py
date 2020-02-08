@@ -45,7 +45,7 @@ class Agent(object):
         self.guiTaskName = ''
         self.guiTaskValue = ''
         self.guiGoalPoint = PoseStamped()
-        self.guiAccept = True
+        self.guiAccept = False
         self.guiGoalAccept = False
         self.odometry = Odometry()
         self.exploreGoal = PoseStamped()
@@ -89,7 +89,7 @@ class Agent(object):
         if neighbor.guiTaskValue and neighbor.guiTaskValue != self.guiTaskValue:
             self.guiTaskValue = neighbor.guiTaskValue
             self.guiAccept = True
-        if neighbor.guiGoalPoint != self.guiGoalPoint:
+        if neighbor.guiGoalPoint.header.frame_id and neighbor.guiGoalPoint != self.guiGoalPoint:
             self.guiGoalPoint = neighbor.guiGoalPoint
             self.guiGoalAccept = True
 
@@ -163,6 +163,7 @@ class BeaconObj(object):
         self.mapSize = Float64()
         self.travMap = Octomap()
         self.travMapSize = Float64()
+        self.raiseAntenna = rospy.Publisher('/' + agent + '/set_mast', Bool, queue_size=10)
 
     def update(self, neighbor):
 
@@ -317,7 +318,6 @@ class MultiAgent:
         homeTopic = rospy.get_param('multi_agent/homeTopic', 'report_artifact')
         baseTopic = rospy.get_param('multi_agent/baseTopic', '/Base/ma_status')
         stopTopic = rospy.get_param('multi_agent/stopTopic', 'stop_for_beacon_drop')
-        statusTopic = rospy.get_param('multi_agent/statusTopic', 'task_update')
         waitTopic = rospy.get_param('multi_agent/waitTopic', 'origin_detection_status')
         commTopic = rospy.get_param('multi_agent/commTopic', 'base_comm')
         goalTopic = rospy.get_param('multi_agent/goalTopic', 'ma_goal')
@@ -356,6 +356,8 @@ class MultiAgent:
         self.minAnchorDist = 10  # Minimum distance before a beacon is ever dropped
         self.report = False
         self.wait = True
+        self.newTask = False
+        self.mode = 'Explore'
 
         rospy.init_node(self.id + '_multi_agent')
         self.start_time = rospy.get_rostime()
@@ -377,10 +379,9 @@ class MultiAgent:
             self.goal_pub = rospy.Publisher(goalTopic, PoseStamped, queue_size=10)
             self.path_pub = rospy.Publisher(pathTopic, Path, queue_size=10)
             self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
-            self.status_sub = rospy.Subscriber(statusTopic, String, self.StatusMonitor)
+            self.task_sub = rospy.Subscriber('task', String, self.TaskMonitor)
 
             self.pub_guiTask = {}
-            self.pub_guiTask['task'] = self.task_pub
             self.pub_guiTask['estop'] = rospy.Publisher('estop', Bool, queue_size=10)
             self.pub_guiTask['estop_cmd'] = rospy.Publisher('estop_cmd', Bool, queue_size=10)
             self.pub_guiTask['radio_reset_cmd'] = rospy.Publisher('radio_reset_cmd', Bool, queue_size=10)
@@ -557,21 +558,31 @@ class MultiAgent:
         self.monitor['artifacts'].publish(self.martifact)
 
     def GuiTaskNameReceiver(self, data, nid):
-        self.neighbors[nid].guiTaskName = data.data
+        # Need to update the last message time to force neighbors to accept it
+        if data.data != self.neighbors[nid].guiTaskName:
+            self.neighbors[nid].lastMessage = rospy.get_rostime()
+            self.neighbors[nid].guiTaskName = data.data
 
     def GuiTaskValueReceiver(self, data, nid):
-        self.neighbors[nid].guiTaskValue = data.data
+        if data.data != self.neighbors[nid].guiTaskValue:
+            self.neighbors[nid].lastMessage = rospy.get_rostime()
+            self.neighbors[nid].guiTaskValue = data.data
 
     def GuiGoalReceiver(self, data, nid):
-        self.neighbors[nid].guiGoalPoint.header.frame_id = 'world'
-        self.neighbors[nid].guiGoalPoint.pose = data
+        if data != self.neighbors[nid].guiGoalPoint.pose:
+            self.neighbors[nid].lastMessage = rospy.get_rostime()
+            self.neighbors[nid].guiGoalPoint.header.frame_id = 'world'
+            self.neighbors[nid].guiGoalPoint.pose = data
 
     def WaitMonitor(self, data):
         if data.status > 0:
             self.wait = False
 
-    def StatusMonitor(self, data):
-        self.agent.status = data.data
+    def TaskMonitor(self, data):
+        if data.data != self.agent.status:
+            self.newTask = data.data
+        else:
+            self.newTask = False
 
     def BaseMonitor(self, data):
         # TODO is this still needed?  Just use the Anchor/low_data message?  add lastArtifact to it
@@ -692,6 +703,7 @@ class MultiAgent:
                     activate = True
                     self.beacon.active = True
                     self.beacon.pos = beacon.pos
+                    self.beacon.raiseAntenna.publish(True)
 
             if not activate:
                 return
@@ -707,12 +719,18 @@ class MultiAgent:
                 # TODO if we assume all beacons are talking to base then this isn't needed?
                 self.beacons[data.id].update(data)
         elif data.type == 'base':
-            runComm = True
-            notStart = self.base.lastMessage > rospy.Time(0)
-            self.base.update(data)
+            if self.base.simcomm:
+                runComm = True
+                notStart = self.base.lastMessage > rospy.Time(0)
+                self.base.update(data)
         elif self.neighbors[data.id].simcomm:
             runComm = True
             notStart = self.neighbors[data.id].lastMessage > rospy.Time(0)
+
+            # Don't accept the GUI commands unless here or risk overwriting
+            data.guiTaskName = ''
+            data.guiTaskValue = ''
+            data.guiGoalPoint = PoseStamped()
 
             # Load data from our neighbors, and their neighbors
             self.neighbors[data.id].update(data, offset, self.id)
@@ -746,16 +764,23 @@ class MultiAgent:
                     incomm = self.neighbors[neighbor2.id].incomm
 
                     if (notStart and (newerMessage and (notDirectComm or not incomm))):
+                        # Don't accept the GUI commands transmitted from the agents at the base
+                        if self.type == 'base':
+                            neighbor2.guiTaskName = ''
+                            neighbor2.guiTaskValue = ''
+                            neighbor2.guiGoalPoint = PoseStamped()
                         self.neighbors[neighbor2.id].update(neighbor2, offset)
 
-                elif data.type == 'base':
-                    if (self.agent.guiTaskName != neighbor2.guiTaskName or
-                            self.agent.guiTaskValue != neighbor2.guiTaskValue):
+                elif neighbor2.lastMessage.data + offset + rospy.Duration(1) > self.base.lastMessage:
+                    # Accept the GUI commands coming from a neighbor if its new
+                    if (neighbor2.guiTaskName and neighbor2.guiTaskValue and
+                            (self.agent.guiTaskName != neighbor2.guiTaskName or
+                             self.agent.guiTaskValue != neighbor2.guiTaskValue)):
                         self.agent.guiTaskName = neighbor2.guiTaskName
                         self.agent.guiTaskValue = neighbor2.guiTaskValue
                         self.agent.guiAccept = True
-                        self.publishGUITask()
-                    if self.agent.guiGoalPoint != neighbor2.guiGoalPoint:
+                    if (neighbor2.guiGoalPoint.header.frame_id and
+                            self.agent.guiGoalPoint != neighbor2.guiGoalPoint):
                         self.agent.guiGoalPoint = neighbor2.guiGoalPoint
                         self.agent.guiGoalAccept = True
 
@@ -1025,15 +1050,30 @@ class MultiAgent:
             self.agent.goal = goals[i - 1]
 
     def setGoalPoint(self, reason):
+        # Set the goal point for frontier exploration
         if reason == 'guiCommand':
             self.pub_guiGoal.publish(self.agent.guiGoalPoint)
         else:
+            # For now Home and Report need this set to switch frontier exploration
             self.home_pub.publish(True)
-        self.task_pub.publish(reason)
+
+        # Set the new task, and use frontier exploration's goal and path
+        self.agent.status = reason
+        self.task_pub.publish(self.agent.status)
         self.goal_pub.publish(self.agent.exploreGoal)
         self.path_pub.publish(self.agent.explorePath)
         self.agent.goal.pose = self.agent.exploreGoal
         self.agent.goal.path = self.agent.explorePath
+
+    def deconflictExplore(self):
+        # Explore with goal deconfliction
+        self.agent.status = 'Explore'
+        self.home_pub.publish(False)
+        self.task_pub.publish(self.agent.status)
+        # Find the best goal point to go to and publish
+        self.deconflictGoals()
+        self.goal_pub.publish(self.agent.goal.pose)
+        self.path_pub.publish(self.agent.goal.path)
 
     def start(self):
         # Wait to start running anything until we've gotten some data and can confirm comms
@@ -1066,12 +1106,30 @@ class MultiAgent:
                 # Update our comm status for anyone who needs it
                 self.comm_pub.publish(self.base.incomm)
 
-                # Check if we need to drop a beacon either due to GUI or autonomous
-                if (self.agent.guiAccept and self.agent.guiTaskName == 'task' and
-                        self.agent.guiTaskValue == 'Deploy'):
-                    self.deployBeacon(True, 'GUI Command')
+                # For future use, to handle tasks coming from the topic
+                # Maybe this should just be separate topic
+                if self.newTask:
+                    print(self.id, 'received external new task', self.newTask)
+
+                checkBeacon = True
+                # Manage the newest task sent
+                if self.agent.guiAccept:
+                    if self.agent.guiTaskName == 'task':
+                        if self.agent.guiTaskValue == 'Explore':
+                            self.mode = 'Explore'
+                        elif self.agent.guiTaskValue == 'Home':
+                            self.mode = 'Home'
+                        elif self.agent.guiTaskValue == 'Deploy':
+                            self.deployBeacon(True, 'GUI Command')
+                            checkBeacon = False
+                            self.mode = 'Explore'
+                    else:
+                        self.publishGUITask()
+
                     self.agent.guiAccept = False
-                else:
+
+                # Check whether to drop a beacon, as long as we weren't commanded by the GUI
+                if checkBeacon:
                     self.beaconCheck()
 
                 num_neighbors = 0
@@ -1097,43 +1155,42 @@ class MultiAgent:
                 self.artifactCheck(self.agent, self.artifacts)
                 self.artifactCheckReport()
 
-                # Change the goal to go home to report
-                if self.report:
-                    # Once we see the base has our latest artifact report we can stop going home
-                    if self.solo or self.base.lastArtifact == self.agent.lastArtifact:
-                        # Only change our task if we set it!
-                        # TODO need to check the task and task_update topics for changes
-                        self.home_pub.publish(False)
-                        if self.agent.status == 'Report':
-                            self.task_pub.publish('Explore')
-                            self.deconflictGoals()
-                            self.goal_pub.publish(self.agent.goal.pose)
-                            self.path_pub.publish(self.agent.goal.path)
-
-                        self.report = False
-                        for artifact in self.artifacts.values():
-                            artifact.reported = True
-                    else:
-                        print(self.id, 'return to report...')
-                        self.setGoalPoint('Report')
-                elif self.agent.guiTaskName == 'task' and self.agent.guiTaskValue == 'Home':
+                # Decide which goal to go to based on status in this precedence:
+                # GUI Return Home
+                # GUI Goal Point
+                # Report Artifacts
+                # Explore
+                if self.mode == 'Home':
                     self.setGoalPoint('Home')
                 elif self.agent.guiGoalAccept:
                     if (getDist(self.agent.odometry.pose.pose.position,
-                                self.agent.guiGoalPoint.pose.position) < 2.0):
-                        print(self.id, 'Resuming exploration...')
-                        self.task_pub.publish('Explore')
+                                self.agent.guiGoalPoint.pose.position) < 1.0):
+                        print(self.id, 'resuming exploration...')
                         self.agent.guiGoalAccept = False
+                        # May want to add other options for tasks when it reaches the goal
+                        self.deconflictExplore()
                     else:
-                        print(self.id, 'setting GUI Goal Point...')
+                        if self.agent.status != 'guiCommand':
+                            print(self.id, 'setting GUI Goal Point...')
                         self.setGoalPoint('guiCommand')
+                elif self.report:
+                    # Once we see the base has our latest artifact report we can stop going home
+                    if self.solo or self.base.lastArtifact == self.agent.lastArtifact:
+                        # Turn off reporting
+                        self.report = False
+                        for artifact in self.artifacts.values():
+                            artifact.reported = True
+
+                        # Resume normal exploration
+                        print(self.id, 'resuming exploration...')
+                        self.deconflictExplore()
+                    else:
+                        if self.agent.status != 'Report':
+                            print(self.id, 'return to report...')
+                        self.setGoalPoint('Report')
                 else:
-                    self.home_pub.publish(False)
-                    self.task_pub.publish('Explore')
-                    # Find the best goal point to go to and publish
-                    self.deconflictGoals()
-                    self.goal_pub.publish(self.agent.goal.pose)
-                    self.path_pub.publish(self.agent.goal.path)
+                    # Normal exploration with coordination
+                    self.deconflictExplore()
 
             # If I'm a beacon, don't publish anything!  But keep listening for activate message.
             if self.type == 'beacon' and not self.beacon.active:
