@@ -62,7 +62,6 @@ class Agent(object):
         self.artifacts = {}
         self.lastMessage = rospy.get_rostime()
         self.lastDirectMessage = self.lastMessage
-        self.lastHighMessage = self.lastMessage
         self.lastArtifact = ''
         self.incomm = True
         self.simcomm = True
@@ -78,10 +77,11 @@ class Agent(object):
         self.incomm = boolean flag whether the agent is currently in comm, useful only at anchor
         """
 
-    def update(self, neighbor, offset, updater=False):
+    def updateLow(self, neighbor):
         self.status = neighbor.status
         self.odometry = neighbor.odometry
         self.goal = neighbor.goal
+        self.newArtifacts = neighbor.newArtifacts
 
         if neighbor.guiTaskName and neighbor.guiTaskName != self.guiTaskName:
             self.guiTaskName = neighbor.guiTaskName
@@ -93,10 +93,12 @@ class Agent(object):
             self.guiGoalPoint = neighbor.guiGoalPoint
             self.guiGoalAccept = True
 
+    def update(self, neighbor, offset, updater=False):
         # Update parameters depending on if we're talking directly or not
+        # Ignore most low bandwidth data if it's high bandwidth, since there's a
+        # good chance it's older, and may cause jumping info.
         if updater:
             self.commBeacons = neighbor.commBeacons
-            self.newArtifacts = neighbor.newArtifacts
             self.cid = updater
             self.lastMessage = rospy.get_rostime()
             self.lastDirectMessage = self.lastMessage
@@ -107,8 +109,11 @@ class Agent(object):
                 self.mapSize = neighbor.mapSize
                 self.travMap = neighbor.travMap
                 self.travMapSize = neighbor.travMapSize
-                self.lastHighMessage = self.lastMessage
+            else:
+                self.updateLow(neighbor)
         else:
+            # Neighbor data is only low bandwidth
+            self.updateLow(neighbor)
             self.cid = neighbor.cid
             self.incomm = False
             # Update the timestamp with the offset between machines
@@ -631,7 +636,6 @@ class MultiAgent:
             if high:
                 msg.map = agent.map
                 msg.travMap = agent.travMap
-                msg.lastMessage.data = agent.lastHighMessage
 
     def CommCheck(self):
         # Simply check when the last time we saw a message and set status
@@ -755,8 +759,6 @@ class MultiAgent:
                     else:
                         messOffset = self.commThreshold
 
-                    # Need to look at high bandwidth messages with a separate timestamp
-                    # TODO clean this up now that we only have merged maps
                     newerMessage = (neighbor2.lastMessage.data + offset >
                                     self.neighbors[neighbor2.id].lastMessage + messOffset)
 
@@ -1116,6 +1118,8 @@ class MultiAgent:
                 if self.agent.guiAccept:
                     if self.agent.guiTaskName == 'task':
                         if self.agent.guiTaskValue == 'Explore':
+                            # Overrides goal point to return to explore
+                            self.agent.guiGoalAccept = False
                             self.mode = 'Explore'
                         elif self.agent.guiTaskValue == 'Home':
                             self.mode = 'Home'
@@ -1250,12 +1254,9 @@ class MultiAgent:
 
             # Publish our data!  Publishing both low and high bandwidth so low doesn't depend
             # on the high bandwidth getting through
+            # Not including neighbor data in high bandwidth to ease conflicts
             pubDataHigh = AgentMsg()
             self.buildAgentMessage(pubDataHigh, self.agent, True)
-            for neighbor in self.neighbors.values():
-                msg = NeighborMsg()
-                self.buildAgentMessage(msg, neighbor, True)
-                pubDataHigh.neighbors.append(msg)
 
             # Remove the maps from low bandwidth.  May consider removing other data as well.
             pubDataLow = AgentMsg()
