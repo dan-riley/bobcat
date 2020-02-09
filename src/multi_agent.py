@@ -315,7 +315,7 @@ class MultiAgent:
         # Potential robot neighbors to monitor
         neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'H01,H02,H03').split(',')
         # Beacons this robot is carrying
-        myBeacons = rospy.get_param('multi_agent/myBeacons', 'B01,B02,B03,B04').split(',')
+        myBeacons = rospy.get_param('multi_agent/myBeacons', '').split(',')
         self.numBeacons = len(myBeacons)
         # Topics for publishers
         pubLowTopic = rospy.get_param('multi_agent/pubLowTopic', 'low_data')
@@ -362,6 +362,7 @@ class MultiAgent:
         self.report = False
         self.wait = True
         self.newTask = False
+        self.stopStart = True
         self.mode = 'Explore'
 
         rospy.init_node(self.id + '_multi_agent')
@@ -731,6 +732,16 @@ class MultiAgent:
             runComm = True
             notStart = self.neighbors[data.id].lastMessage > rospy.Time(0)
 
+            # Verify that the neighbor received this goal point then clear it out
+            if (data.guiTaskName and data.guiTaskValue and
+                    (self.neighbors[data.id].guiTaskName == data.guiTaskName and
+                     self.neighbors[data.id].guiTaskValue == data.guiTaskValue)):
+                self.neighbors[data.id].guiTaskName = ''
+                self.neighbors[data.id].guiTaskValue = ''
+            if (data.guiGoalPoint.header.frame_id and
+                    self.neighbors[data.id].guiGoalPoint == data.guiGoalPoint):
+                self.neighbors[data.id].guiGoalPoint = PoseStamped()
+
             # Don't accept the GUI commands unless here or risk overwriting
             data.guiTaskName = ''
             data.guiTaskValue = ''
@@ -774,7 +785,7 @@ class MultiAgent:
                         self.neighbors[neighbor2.id].update(neighbor2, offset)
 
                 elif neighbor2.lastMessage.data + offset + rospy.Duration(1) > self.base.lastMessage:
-                    # Accept the GUI commands coming from a neighbor if its new
+                    # Accept the GUI commands coming from a neighbor if its new and not empty
                     if (neighbor2.guiTaskName and neighbor2.guiTaskValue and
                             (self.agent.guiTaskName != neighbor2.guiTaskName or
                              self.agent.guiTaskValue != neighbor2.guiTaskValue)):
@@ -827,7 +838,8 @@ class MultiAgent:
 
         if deploy:
             # Stop the robot and publish message to deployment mechanism
-            self.stop_pub.publish(True)
+            # self.stop_pub.publish(True)
+            self.stop()
             pose = self.agent.odometry.pose.pose
 
             if self.useSimComms:
@@ -861,13 +873,14 @@ class MultiAgent:
                     print(ret.status_message)
                 else:
                     # Wait to stop, send deploy message, then wait for deployment to finish
-                    # rospy.sleep(3)
+                    rospy.sleep(3)
                     self.deploy_pub.publish(True)
-                    # rospy.sleep(10)
+                    rospy.sleep(10)
 
                 # Resume the mission
-                self.stop_pub.publish(False)
-                # self.deploy_pub.publish(False)
+                # self.stop_pub.publish(False)
+                self.deconflictExplore()
+                self.deploy_pub.publish(False)
 
                 self.numBeacons = self.numBeacons - 1
                 self.beacons[deploy].active = True
@@ -1051,6 +1064,23 @@ class MultiAgent:
             # Set the goal to the last goal without conflict
             self.agent.goal = goals[i - 1]
 
+    def stop(self):
+        # Stop the robot by publishing no path, but don't change the displayed goal
+        self.agent.status = 'Stop'
+        self.task_pub.publish(self.agent.status)
+        if self.stopStart:
+            print(self.id, "stopping")
+            path = Path()
+            path.header.frame_id = 'world'
+            inplace = PoseStamped()
+            inplace.pose = self.agent.odometry.pose.pose
+            inplace.header.frame_id = 'world'
+            path.poses.append(inplace)
+            path.poses.append(inplace)
+            self.goal_pub.publish(inplace)
+            self.path_pub.publish(path)
+            self.stopStart = False
+
     def setGoalPoint(self, reason):
         # Set the goal point for frontier exploration
         if reason == 'guiCommand':
@@ -1060,6 +1090,7 @@ class MultiAgent:
             self.home_pub.publish(True)
 
         # Set the new task, and use frontier exploration's goal and path
+        self.stopStart = True
         self.agent.status = reason
         self.task_pub.publish(self.agent.status)
         self.goal_pub.publish(self.agent.exploreGoal)
@@ -1069,6 +1100,7 @@ class MultiAgent:
 
     def deconflictExplore(self):
         # Explore with goal deconfliction
+        self.stopStart = True
         self.agent.status = 'Explore'
         self.home_pub.publish(False)
         self.task_pub.publish(self.agent.status)
@@ -1123,6 +1155,8 @@ class MultiAgent:
                             self.mode = 'Explore'
                         elif self.agent.guiTaskValue == 'Home':
                             self.mode = 'Home'
+                        elif self.agent.guiTaskValue == 'Stop':
+                            self.mode = 'Stop'
                         elif self.agent.guiTaskValue == 'Deploy':
                             self.deployBeacon(True, 'GUI Command')
                             checkBeacon = False
@@ -1161,11 +1195,14 @@ class MultiAgent:
 
                 # Decide which goal to go to based on status in this precedence:
                 # GUI Return Home
+                # GUI Stop
                 # GUI Goal Point
                 # Report Artifacts
                 # Explore
                 if self.mode == 'Home':
                     self.setGoalPoint('Home')
+                elif self.mode == 'Stop':
+                    self.stop()
                 elif self.agent.guiGoalAccept:
                     if (getDist(self.agent.odometry.pose.pose.position,
                                 self.agent.guiGoalPoint.pose.position) < 1.0):

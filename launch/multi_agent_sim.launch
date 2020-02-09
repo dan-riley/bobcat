@@ -6,7 +6,7 @@
   <!-- Type of node.  Current options are 'robot' and 'base' -->
   <arg name="type" default="robot" />
   <!-- List of the beacons this robot is carrying -->
-  <arg name="myBeacons" default="B01,B02,B03,B04" />
+  <arg name="myBeacons" default="" />
   <!-- Total number of beacons across all deployed agents.  Higher is ok. -->
   <arg name="totalBeacons" default="8" />
   <!-- List of all potentially deployed neighbors.  Determines what topics are subscribed. -->
