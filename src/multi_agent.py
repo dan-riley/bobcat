@@ -838,9 +838,12 @@ class MultiAgent:
 
         if deploy:
             # Stop the robot and publish message to deployment mechanism
-            # self.stop_pub.publish(True)
             self.stop()
             pose = self.agent.odometry.pose.pose
+
+            # TODO doesn't currently work since the node is paused!
+            self.agent.status = 'Deploy'
+            self.task_pub.publish(self.agent.status)
 
             if self.useSimComms:
                 # Either need to identify location before comm loss, or make this a guidance
@@ -878,7 +881,7 @@ class MultiAgent:
                     rospy.sleep(10)
 
                 # Resume the mission
-                # self.stop_pub.publish(False)
+                self.stop_pub.publish(False)
                 self.deconflictExplore()
                 self.deploy_pub.publish(False)
 
@@ -1068,7 +1071,9 @@ class MultiAgent:
         # Stop the robot by publishing no path, but don't change the displayed goal
         self.agent.status = 'Stop'
         self.task_pub.publish(self.agent.status)
-        if self.stopStart:
+        self.stop_pub.publish(True)
+
+        if self.stopStart and self.useSimComms:
             print(self.id, "stopping")
             path = Path()
             path.header.frame_id = 'world'
@@ -1161,6 +1166,9 @@ class MultiAgent:
                             self.deployBeacon(True, 'GUI Command')
                             checkBeacon = False
                             self.mode = 'Explore'
+
+                        # Disable the estop.  'Stop' will re-enable it
+                        self.stop_pub.publish(False)
                     else:
                         self.publishGUITask()
 
