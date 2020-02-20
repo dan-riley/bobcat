@@ -362,6 +362,7 @@ class MultiAgent:
         self.report = False
         self.wait = True
         self.newTask = False
+        self.taskCount = 0
         self.stopStart = True
         self.mode = 'Explore'
 
@@ -524,8 +525,11 @@ class MultiAgent:
                 martifact.scale.y = 10.0
                 martifact.scale.z = 10.0
 
-                if artifact.firstSeen < rospy.get_rostime() - rospy.Duration(30):
-                    artifact.new = False
+                try:
+                    if artifact.firstSeen < rospy.get_rostime() - rospy.Duration(30):
+                        artifact.new = False
+                except TypeError:
+                    continue
             else:
                 martifact.scale.x = 1.0
                 martifact.scale.y = 1.0
@@ -587,8 +591,11 @@ class MultiAgent:
     def TaskMonitor(self, data):
         if data.data != self.agent.status:
             self.newTask = data.data
-        else:
+        elif self.taskCount > 10:
             self.newTask = False
+            self.taskCount = 0
+        else:
+            self.taskCount += 1
 
     def BaseMonitor(self, data):
         # TODO is this still needed?  Just use the Anchor/low_data message?  add lastArtifact to it
@@ -613,10 +620,15 @@ class MultiAgent:
 
         self.base_pub.publish(msg)
 
+    def getStatus(self):
+        if self.newTask:
+            return self.agent.status + '+++' + self.newTask
+        else:
+            return self.agent.status
+
     def buildAgentMessage(self, msg, agent, high):
         msg.id = agent.id
         msg.cid = agent.cid
-        msg.status = agent.status
         msg.guiTaskName = agent.guiTaskName
         msg.guiTaskValue = agent.guiTaskValue
         msg.guiGoalPoint = agent.guiGoalPoint
@@ -627,6 +639,7 @@ class MultiAgent:
 
         # Data that's only sent via direct comms
         if agent.id == self.id:
+            msg.status = self.getStatus()
             msg.type = self.type
             msg.commBeacons.data = self.beaconsArray
             # TODO this isn't going to work.  Need to figure it out.
@@ -637,6 +650,8 @@ class MultiAgent:
             if high:
                 msg.map = agent.map
                 msg.travMap = agent.travMap
+        else:
+            msg.status = agent.status
 
     def CommCheck(self):
         # Simply check when the last time we saw a message and set status
