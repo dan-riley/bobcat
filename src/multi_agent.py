@@ -592,7 +592,8 @@ class MultiAgent:
             self.wait = False
 
     def TaskMonitor(self, data):
-        if data.data != self.agent.status:
+        normalStatus = ['Able to plan home', 'Exploring']
+        if data.data != self.agent.status and data.data not in normalStatus:
             self.newTask = data.data
         elif self.taskCount > 10:
             self.newTask = False
