@@ -33,6 +33,8 @@
   <arg name="turnDetect" default="true" />
   <!-- Whether to delay beacon deployment so the trailing robot can drop instead -->
   <arg name="delayDrop" default="false" />
+  <!-- Whether to reverse direction to drop a beacon due to comm loss -->
+  <arg name="reverseDrop" default="false" />
   <!-- Topic to publish/subscribe low bandwidth data to neighbors -->
   <arg name="pubLowTopic" default="low_data" />
   <!-- Topic to publish/subscribe high bandwidth data to neighbors -->
@@ -58,7 +60,7 @@
   <arg name="nodeTopic" default="at_a_node" />
   <arg name="artifactsTopic" default="artifact_array" />
   <!-- Approximate location of anchor node, for first beacon drop distance calc -->
-  <arg name="anchorX" default="1.0" />
+  <arg name="anchorX" default="11.0" />
   <arg name="anchorY" default="0.0" />
   <arg name="anchorZ" default="0.1" />
 
@@ -80,6 +82,7 @@
     <param name="junctionDist" value="$(arg junctionDist)" />
     <param name="turnDetect" value="$(arg turnDetect)" />
     <param name="delayDrop" value="$(arg delayDrop)" />
+    <param name="reverseDrop" value="$(arg reverseDrop)" />
     <param name="pubLowTopic" value="$(arg pubLowTopic)" />
     <param name="pubHighTopic" value="$(arg pubHighTopic)" />
     <param name="homeTopic" value="$(arg homeTopic)" />

@@ -310,13 +310,15 @@ class MultiAgent:
         self.turnDetect = rospy.get_param('multi_agent/turnDetect', True)
         # Whether this agent should delay their drop so the trailing robot can
         self.delayDrop = rospy.get_param('multi_agent/delayDrop', False)
+        # Whether to backtrack to deploy a beacon
+        self.reverseDrop = rospy.get_param('multi_agent/reverseDrop', False)
         # Total number of potential beacons
         totalBeacons = rospy.get_param('multi_agent/totalBeacons', 16)
         # Potential robot neighbors to monitor
         neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'H01,H02,H03').split(',')
         # Beacons this robot is carrying
         myBeacons = rospy.get_param('multi_agent/myBeacons', '').split(',')
-        self.numBeacons = len(myBeacons)
+        self.numBeacons = len(myBeacons) if myBeacons[0] != '' else 0
         # Topics for publishers
         pubLowTopic = rospy.get_param('multi_agent/pubLowTopic', 'low_data')
         pubHighTopic = rospy.get_param('multi_agent/pubHighTopic', 'high_data')
@@ -363,6 +365,7 @@ class MultiAgent:
         self.wait = True
         self.newTask = False
         self.taskCount = 0
+        self.beaconCommLost = 0
         self.stopStart = True
         self.mode = 'Explore'
 
@@ -910,6 +913,7 @@ class MultiAgent:
             print(self.id, "no beacon to deploy")
             # Most likely reason it thought we had a beacon is due to restart.  So set num=0.
             self.numBeacons = 0
+            self.mode = 'Explore'
 
     def beaconCheck(self):
         # Check if we need to drop a beacon if we have any beacons to drop
@@ -922,6 +926,7 @@ class MultiAgent:
 
             # We're connected to the mesh, either through anchor or beacon(s)
             if self.base.incomm:
+                self.beaconCommLost = 0
                 # Update our movement history.  May need to move up one level if we use out of comm
                 self.updateHistory()
 
@@ -987,10 +992,12 @@ class MultiAgent:
                         self.delayDrop = False
                     else:
                         self.deployBeacon(True, dropReason)
-            else:
+            elif self.reverseDrop:
+                self.beaconCommLost += 1
                 # If we're not talking to the base station, attempt to reverse drop
-                # self.deployBeacon(False)
-                pass
+                if self.beaconCommLost > 5:
+                    self.mode = 'Deploy'
+                    self.beaconCommLost = 0
 
     def baseArtifacts(self):
         for neighbor in self.neighbors.values():
@@ -1226,6 +1233,14 @@ class MultiAgent:
                     self.setGoalPoint('Home')
                 elif self.mode == 'Stop':
                     self.stop()
+                elif self.mode == 'Deploy':
+                    print(self.id, 'reverse deploy mode')
+                    if self.base.incomm:
+                        self.deployBeacon(True, 'Regain comms')
+                        self.mode = 'Explore'
+                    else:
+                        self.agent.status += '+++Regain comms deploy'
+                        self.setGoalPoint('Home')
                 elif self.agent.guiGoalAccept:
                     if (getDist(self.agent.odometry.pose.pose.position,
                                 self.agent.guiGoalPoint.pose.position) < 1.0):
