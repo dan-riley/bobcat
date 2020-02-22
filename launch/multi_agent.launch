@@ -44,7 +44,7 @@
   <!-- Topic to monitor from base station to ensure we're in comm -->
   <arg name="baseTopic" default="/Base/ma_status" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
-  <arg name="stopTopic" default="stop_for_beacon_drop" />
+  <arg name="stopTopic" default="estop_cmd" />
   <arg name="waitTopic" default="origin_detection_status" />
   <arg name="commTopic" default="base_comm" />
   <arg name="odomTopic" default="odometry" />

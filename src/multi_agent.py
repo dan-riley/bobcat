@@ -1053,8 +1053,9 @@ class MultiAgent:
         goals = self.agent.goals.goals
 
         if not goals:
-            # Set an empty goal
-            self.agent.goal = Goal()
+            # Set the goal to the frontier goal
+            self.agent.goal.pose = self.agent.exploreGoal
+            self.agent.goal.path = self.agent.explorePath
         elif len(goals) == 1:
             # If we only have one potential goal, just go there
             # May want to consider stopping in place if there is a conflict!
