@@ -1075,6 +1075,8 @@ class MultiAgent:
                         # If our cost is more than the neighbor, don't go to this goal
                         if goals[i].cost.data > neighbor.goal.cost.data:
                             conflict = True
+                            if not self.newTask:
+                                self.newTask = 'Replanning'
                             print(str(self.id) + " replanning")
                             # Don't need to check any more neighbors for this goal if conflict
                             break
@@ -1241,7 +1243,8 @@ class MultiAgent:
                         self.deployBeacon(True, 'Regain comms')
                         self.mode = 'Explore'
                     else:
-                        self.agent.status += '+++Regain comms deploy'
+                        if not self.newTask:
+                            self.newTask = 'Regain comms deploy'
                         self.setGoalPoint('Home')
                 elif self.agent.guiGoalAccept:
                     if (getDist(self.agent.odometry.pose.pose.position,
