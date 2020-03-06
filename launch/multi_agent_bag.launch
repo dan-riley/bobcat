@@ -59,7 +59,7 @@
   <arg name="anchorY" default="0.0" />
   <arg name="anchorZ" default="0.0" />
 
-  <node ns="$(arg ns)" pkg="marble_multi_agent" type="multi_agent.py" name="multi_agent" output="screen">
+  <node ns="$(arg ns)" pkg="marble_multi_agent" type="multi_agent_node.py" name="multi_agent" output="screen">
     <!-- Parameters -->
     <param name="vehicle" value="$(arg vehicle)" />
     <param name="type" value="$(arg type)" />
