@@ -1,2 +1,0 @@
-Beacon[] beacons
-AgentArtifact[] agents

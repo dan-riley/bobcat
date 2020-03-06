@@ -18,7 +18,6 @@ add_message_files(
   Beacon.msg
   BeaconArray.msg
   AgentArtifact.msg
-  BaseMonitor.msg
   AgentMsg.msg
   NeighborMsg.msg
   Goal.msg

@@ -7,7 +7,6 @@ from geometry_msgs.msg import Pose
 from visualization_msgs.msg import Marker
 from visualization_msgs.msg import MarkerArray
 from marble_multi_agent.msg import AgentArtifact
-from marble_multi_agent.msg import BaseMonitor
 
 from multi_agent import MultiAgent
 
@@ -30,10 +29,6 @@ class MABase(MultiAgent):
                 rospy.Subscriber(topic + 'guiTaskValue', String, self.GuiTaskValueReceiver, nid)
             self.monitor[nid]['guiGoalPoint'] = \
                 rospy.Subscriber(topic + 'guiGoalPoint', Pose, self.GuiGoalReceiver, nid)
-
-        # The status message for the agents get latest beacons and artifact acknowledgement
-        # TODO shouldn't need this, and revert baseTopic to not self
-        self.base_pub = rospy.Publisher(self.baseTopic, BaseMonitor, queue_size=10)
 
         self.monitor['beacons'] = rospy.Publisher('mbeacons', Marker, queue_size=10)
         self.mbeacon = Marker()
@@ -118,21 +113,18 @@ class MABase(MultiAgent):
             self.neighbors[nid].guiGoalPoint.header.frame_id = 'world'
             self.neighbors[nid].guiGoalPoint.pose = data
 
-    def publishBaseMonitor(self):
-        # Publish the base's beacon list and artifact status of each neighbor
-        msg = BaseMonitor()
-        msg.beacons = self.beaconsArray
+    def buildBaseArtifacts(self):
+        # Set all of the current base station data
+        self.base.baseArtifacts = []
         for neighbor in self.neighbors.values():
             agent = AgentArtifact()
             agent.id = neighbor.id
             agent.lastArtifact = neighbor.lastArtifact
-            msg.agents.append(agent)
-
-        self.base_pub.publish(msg)
+            self.base.baseArtifacts.append(agent)
 
     def run(self):
         self.baseArtifacts()
-        self.publishBaseMonitor()
+        self.buildBaseArtifacts()
         self.publishNeighbors()
 
         return True

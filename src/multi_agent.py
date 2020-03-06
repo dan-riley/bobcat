@@ -17,7 +17,6 @@ from marble_multi_agent.msg import NeighborMsg
 from marble_multi_agent.msg import CommsCheckArray
 from marble_multi_agent.msg import Beacon
 from marble_multi_agent.msg import BeaconArray
-from marble_multi_agent.msg import BaseMonitor
 from marble_multi_agent.msg import Goal
 from marble_multi_agent.msg import GoalArray
 from octomap_merger.msg import OctomapArray
@@ -129,6 +128,7 @@ class Base(object):
         self.lastArtifact = ''
         self.incomm = True
         self.simcomm = True
+        self.baseArtifacts = []
         self.commBeacons = BeaconArray()
         self.map = Octomap()
         self.mapSize = Float64()
@@ -136,6 +136,10 @@ class Base(object):
         self.travMapSize = Float64()
 
     def update(self, neighbor):
+
+        self.lastMessage = rospy.get_rostime()
+        self.commBeacons.data = neighbor.commBeacons
+        self.baseArtifacts = neighbor.baseArtifacts
 
         # Update the map if it's not empty (ie, high bandwidth message)
         if neighbor.map.data:
@@ -254,7 +258,6 @@ class MultiAgent(object):
         # Topics for publishers
         pubLowTopic = rospy.get_param('multi_agent/pubLowTopic', 'low_data')
         pubHighTopic = rospy.get_param('multi_agent/pubHighTopic', 'high_data')
-        self.baseTopic = rospy.get_param('multi_agent/baseTopic', '/Base/ma_status')
         # Topics for subscribers
         topics = {}
         topics['odometry'] = rospy.get_param('multi_agent/odomTopic', 'odometry')
@@ -278,7 +281,7 @@ class MultiAgent(object):
         self.commcheck = {}
         self.artifacts = {}
         self.monitor = {}
-        self.wait = False
+        self.wait = False  # Change to True to wait for Origin Detection
         self.commListen = False
 
         rospy.init_node(self.id + '_multi_agent')
@@ -290,11 +293,10 @@ class MultiAgent(object):
         self.agent = Agent(self.id, self.id, self.type)
         DataListener(self.agent, topics)
 
+        # Initialize base station
+        self.base = Base()
+
         if self.type != 'base':
-            # Initialize base station
-            self.base = Base()
-            # TODO get rid of the BaseMonitor
-            self.base_sub = rospy.Subscriber(self.baseTopic, BaseMonitor, self.BaseMonitor)
             subLowTopic = '/Base/' + pubLowTopic
             subHighTopic = '/Base/' + pubHighTopic
             self.low_sub['base'] = rospy.Subscriber(subLowTopic, AgentMsg, self.CommReceiver)
@@ -381,17 +383,6 @@ class MultiAgent(object):
             self.monitor[neighbor.id]['travMap'].publish(neighbor.travMap)
             self.monitor[neighbor.id]['artifacts'].publish(neighbor.newArtifacts)
 
-    def BaseMonitor(self, data):
-        # TODO is this still needed?  Just use the Anchor/low_data message?  add lastArtifact to it
-        # Get the beacons from the base, and artifact status
-        if self.base.simcomm:
-            self.base.lastMessage = rospy.get_rostime()
-            self.base.commBeacons.data = data.beacons
-            for agent in data.agents:
-                if agent.id == self.id:
-                    self.base.lastArtifact = agent.lastArtifact
-                    break
-
     def getStatus(self):
         return self.agent.status
 
@@ -410,6 +401,7 @@ class MultiAgent(object):
         if agent.id == self.id:
             msg.status = self.getStatus()
             msg.type = self.type
+            msg.baseArtifacts = self.base.baseArtifacts
             msg.commBeacons.data = self.beaconsArray
             # TODO this isn't going to work.  Need to figure it out.
             # Think this is fine if we assume beacons always talk to base?
@@ -498,6 +490,12 @@ class MultiAgent(object):
                 runComm = True
                 notStart = self.base.lastMessage > rospy.Time(0)
                 self.base.update(data)
+
+                # Update our own last artifact hash
+                for agent in data.baseArtifacts:
+                    if agent.id == self.id:
+                        self.base.lastArtifact = agent.lastArtifact
+                        break
         elif self.neighbors[data.id].simcomm:
             runComm = True
             notStart = self.neighbors[data.id].lastMessage > rospy.Time(0)
@@ -519,6 +517,14 @@ class MultiAgent(object):
 
             # Load data from our neighbors, and their neighbors
             self.neighbors[data.id].update(data, offset, self.id)
+
+            # Update the base station artifacts list if it's newer from this neighbor
+            if data.lastMessage.data + offset + rospy.Duration(1) > self.base.lastMessage:
+                self.base.baseArtifacts = data.baseArtifacts
+                for agent in data.baseArtifacts:
+                    if agent.id == self.id:
+                        self.base.lastArtifact = agent.lastArtifact
+                        break
 
         if runComm:
             # TODO Right now all maps are being sent, even if it's your own.  Can optimize.
@@ -617,8 +623,8 @@ class MultiAgent(object):
         # Need to wait for origin detection before we do anything else
         if self.type == 'robot' and not self.useSimComms:
             rospy.sleep(5)
-            # while self.wait:
-            #     rospy.sleep(1)
+            while self.wait:
+                rospy.sleep(1)
 
         rate = rospy.Rate(self.rate)
         while not rospy.is_shutdown():
@@ -657,7 +663,7 @@ class MultiAgent(object):
                     mergeMaps.sizes.append(beacon.mapSize.data)
                     mergeMaps.num_octomaps += 1
 
-            if hasattr(self, 'base') and self.base.map.data:
+            if self.base.map.data:
                 mergeMaps.octomaps.append(self.base.map)
                 mergeMaps.owners.append('Base')
                 mergeMaps.sizes.append(self.base.mapSize.data)
@@ -682,7 +688,7 @@ class MultiAgent(object):
                     mergeTravMaps.sizes.append(beacon.travMapSize.data)
                     mergeTravMaps.num_octomaps += 1
 
-            if hasattr(self, 'base') and self.base.travMap.data:
+            if self.base.travMap.data:
                 mergeTravMaps.octomaps.append(self.base.travMap)
                 mergeTravMaps.owners.append('Base')
                 mergeTravMaps.sizes.append(self.base.travMapSize.data)

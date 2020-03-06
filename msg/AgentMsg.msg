@@ -13,6 +13,7 @@ std_msgs/Float64 mapSize
 octomap_msgs/Octomap travMap
 std_msgs/Float64 travMapSize
 BeaconArray commBeacons
+AgentArtifact[] baseArtifacts
 marble_artifact_detection_msgs/ArtifactArray newArtifacts
 std_msgs/Time lastMessage
 NeighborMsg[] neighbors
