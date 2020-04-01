@@ -55,6 +55,9 @@ class Agent(object):
         self.incomm = True
         self.simcomm = True
 
+        self.exploreGoal.header.frame_id = 'world'
+        self.explorePath.header.frame_id = 'world'
+
         """ Other properties that need to eventually be added for full functionality:
         self.cid = id of the agent actually in direct comm with this neighbor, if it's indirect
         self.type = robot, beacon, etc.
@@ -138,7 +141,7 @@ class Base(object):
     def update(self, neighbor):
 
         self.lastMessage = rospy.get_rostime()
-        self.commBeacons.data = neighbor.commBeacons
+        self.commBeacons = neighbor.commBeacons
         self.baseArtifacts = neighbor.baseArtifacts
 
         # Update the map if it's not empty (ie, high bandwidth message)
