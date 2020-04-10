@@ -6,5 +6,6 @@ string guiTaskValue
 geometry_msgs/PoseStamped guiGoalPoint
 nav_msgs/Odometry odometry
 Goal goal
+std_msgs/UInt32 numDiffs
 marble_artifact_detection_msgs/ArtifactArray newArtifacts
 std_msgs/Time lastMessage

@@ -9,7 +9,13 @@ find_package(catkin REQUIRED COMPONENTS
   octomap_msgs
   message_generation
   marble_artifact_detection_msgs
+  marble_octomap_merger
 )
+
+add_service_files(
+  FILES
+  GetMapDiffs.srv
+  )
 
 add_message_files(
   FILES
@@ -31,6 +37,7 @@ generate_messages(
   nav_msgs
   octomap_msgs
   marble_artifact_detection_msgs
+  marble_octomap_merger
 )
 
 catkin_package(

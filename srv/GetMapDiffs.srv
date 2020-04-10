@@ -1,0 +1,4 @@
+uint32[] missing
+---
+marble_octomap_merger/OctomapArray mapDiffs
+uint32[] received

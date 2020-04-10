@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
   <!-- Vehicle name for namespace and topic id -->
-  <arg name="vehicle" default="$(env ROS_HOSTNAME)" />
+  <arg name="vehicle" default="H01" />
   <arg name="ns" default="/$(arg vehicle)" />
   <!-- Type of node.  Current options are 'robot' and 'base' -->
   <arg name="type" default="robot" />
@@ -35,10 +35,8 @@
   <arg name="delayDrop" default="false" />
   <!-- Whether to reverse direction to drop a beacon due to comm loss -->
   <arg name="reverseDrop" default="false" />
-  <!-- Topic to publish/subscribe low bandwidth data to neighbors -->
-  <arg name="pubLowTopic" default="low_data" />
-  <!-- Topic to publish/subscribe high bandwidth data to neighbors -->
-  <arg name="pubHighTopic" default="high_data" />
+  <!-- Topic to publish/subscribe data to neighbors -->
+  <arg name="pubTopic" default="ma_data" />
   <!-- Topic the frontier exploration node listens to to calculate path home -->
   <arg name="homeTopic" default="report_artifact" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
@@ -51,10 +49,8 @@
   <arg name="goalTopic" default="ma_goal" />
   <arg name="pathTopic" default="ma_goal_path" />
   <arg name="goalsTopic" default="goal_array" />
-  <arg name="mapTopic" default="merged_map" />
-  <arg name="mapSizeTopic" default="merged_size" />
-  <arg name="travMapTopic" default="merged_traversability_map" />
-  <arg name="travMapSizeTopic" default="merged_traversability_size" />
+  <arg name="mapDiffsTopic" default="map_diffs" />
+  <arg name="numDiffsTopic" default="num_diffs" />
   <arg name="nodeTopic" default="at_node_center" />
   <arg name="artifactsTopic" default="artifact_array/relay" />
   <!-- Approximate location of anchor node, for first beacon drop distance calc -->
@@ -81,8 +77,7 @@
     <param name="turnDetect" value="$(arg turnDetect)" />
     <param name="delayDrop" value="$(arg delayDrop)" />
     <param name="reverseDrop" value="$(arg reverseDrop)" />
-    <param name="pubLowTopic" value="$(arg pubLowTopic)" />
-    <param name="pubHighTopic" value="$(arg pubHighTopic)" />
+    <param name="pubTopic" value="$(arg pubTopic)" />
     <param name="homeTopic" value="$(arg homeTopic)" />
     <param name="stopTopic" value="$(arg stopTopic)" />
     <param name="waitTopic" value="$(arg waitTopic)" />
@@ -93,14 +88,15 @@
     <param name="goalTopic" value="$(arg goalTopic)" />
     <param name="pathTopic" value="$(arg pathTopic)" />
     <param name="goalsTopic" value="$(arg goalsTopic)" />
-    <param name="mapTopic" value="$(arg mapTopic)" />
-    <param name="mapSizeTopic" value="$(arg mapSizeTopic)" />
-    <param name="travMapTopic" value="$(arg travMapTopic)" />
-    <param name="travMapSizeTopic" value="$(arg travMapSizeTopic)" />
+    <param name="numDiffsTopic" value="$(arg numDiffsTopic)" />
     <param name="nodeTopic" value="$(arg nodeTopic)" />
     <param name="artifactsTopic" value="$(arg artifactsTopic)" />
     <param name="anchorX" value="$(arg anchorX)" />
     <param name="anchorY" value="$(arg anchorY)" />
     <param name="anchorZ" value="$(arg anchorZ)" />
+  </node>
+
+  <node ns="$(arg ns)" pkg="marble_multi_agent" type="get_map_diffs.py" name="get_map_diffs" output="screen">
+    <param name="mapDiffsTopic" value="$(arg mapDiffsTopic)" />
   </node>
 </launch>

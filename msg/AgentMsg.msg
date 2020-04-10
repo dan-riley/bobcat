@@ -8,10 +8,7 @@ string guiTaskValue
 geometry_msgs/PoseStamped guiGoalPoint
 nav_msgs/Odometry odometry
 Goal goal
-octomap_msgs/Octomap map
-std_msgs/Float64 mapSize
-octomap_msgs/Octomap travMap
-std_msgs/Float64 travMapSize
+std_msgs/UInt32 numDiffs
 BeaconArray commBeacons
 AgentArtifact[] baseArtifacts
 marble_artifact_detection_msgs/ArtifactArray newArtifacts

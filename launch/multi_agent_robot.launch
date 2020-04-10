@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
   <include file="$(find marble_multi_agent)/launch/multi_agent.launch">
-    <arg name="vehicle" value="Base" />
-    <arg name="type" value="base" />
-    <arg name="monitor" value="true" />
+    <arg name="vehicle" value="$(env ROS_HOSTNAME)" />
+    <arg name="type" value="robot" />
   </include>
 </launch>
