@@ -18,9 +18,11 @@ from marble_multi_agent.msg import Beacon
 from marble_multi_agent.msg import BeaconArray
 from marble_multi_agent.msg import Goal
 from marble_multi_agent.msg import GoalArray
+from marble_multi_agent.msg import MapDiffsReq
 from marble_multi_agent.srv import GetMapDiffs
-from marble_octomap_merger.msg import OctomapArray
-from marble_octomap_merger.msg import OctomapNeighbors
+from octomap_merger.msg import OctomapArray
+from octomap_merger.msg import OctomapNeighbors
+
 
 class Agent(object):
     """ Data structure to hold pertinent information about other agents """
@@ -75,6 +77,12 @@ class Agent(object):
         self.goal = neighbor.goal
         self.newArtifacts = neighbor.newArtifacts
 
+        # Update missing diffs if the neighbor said there are new ones
+        if neighbor.numDiffs.data > self.numDiffs.data:
+            for i in range(self.numDiffs.data, neighbor.numDiffs.data):
+                self.missingDiffs.append(i)
+            self.numDiffs = neighbor.numDiffs
+
         if neighbor.guiTaskName and neighbor.guiTaskName != self.guiTaskName:
             self.guiTaskName = neighbor.guiTaskName
             self.guiAccept = True
@@ -93,36 +101,6 @@ class Agent(object):
             self.lastMessage = rospy.get_rostime()
             self.lastDirectMessage = self.lastMessage
             self.incomm = True
-
-            # Update missing diffs if the neighbor said there are new ones
-            if neighbor.numDiffs.data != self.numDiffs.data:
-                for i in range(self.numDiffs.data, neighbor.numDiffs.data):
-                    self.missingDiffs.append(i)
-                self.numDiffs = neighbor.numDiffs
-
-            # Update local map diffs from the neighbor.  Doing here means only happens in comm.
-            if self.missingDiffs:
-                # Service call to neighbor for diffs, returning whether any are missing
-                # Remove successful ones from missingDiffs
-                service = '/' + self.id + '/get_map_diffs'
-                rospy.wait_for_service(service, timeout=1)
-                get_map_diffs = rospy.ServiceProxy(service, GetMapDiffs)
-
-                try:
-                    resp = get_map_diffs(self.missingDiffs)
-
-                    # Add the new diffs to our array and update the total
-                    for octomap in resp.mapDiffs.octomaps:
-                        self.mapDiffs.octomaps.append(octomap)
-                        self.mapDiffs.num_octomaps += 1
-
-                    # Remove the received diffs, in case we didn't get all of them
-                    for received in resp.received:
-                        self.missingDiffs.remove(received)
-
-                except rospy.ServiceException as e:
-                    print(self.id, "error getting map diffs", self.missingDiffs, str(e))
-
             self.updateCommon(neighbor)
         else:
             self.updateCommon(neighbor)
@@ -544,6 +522,50 @@ class MultiAgent(object):
                         self.agent.guiGoalPoint = neighbor2.guiGoalPoint
                         self.agent.guiGoalAccept = True
 
+    def updateMapDiffs(self):
+        for neighbor in self.neighbors.values():
+            reqs = []
+            if neighbor.incomm:
+                # Add our missing diffs
+                if neighbor.missingDiffs:
+                    req = MapDiffsReq()
+                    req.missing = neighbor.missingDiffs
+                    req.id = neighbor.id
+                    reqs.append(req)
+
+                # Add any other missing diffs.  Asking even if in comm gives best chance
+                for neighbor2 in self.neighbors.values():
+                    if neighbor2.id != neighbor.id and neighbor2.missingDiffs:
+                        req = MapDiffsReq()
+                        req.missing = neighbor2.missingDiffs
+                        req.id = neighbor2.id
+                        reqs.append(req)
+
+            if reqs:
+                # Service call to neighbor for diffs, returning whether any are missing
+                # Remove successful ones from missingDiffs
+                service = '/' + neighbor.id + '/get_map_diffs'
+                rospy.wait_for_service(service, timeout=1)
+                get_map_diffs = rospy.ServiceProxy(service, GetMapDiffs)
+
+                try:
+                    # Make the service call
+                    resp = get_map_diffs(reqs)
+
+                    for agent in resp.agents:
+                        neighbor = self.neighbors[agent.id]
+                        # Add the new diffs to our array and update the total
+                        for octomap in agent.mapDiffs.octomaps:
+                            neighbor.mapDiffs.octomaps.append(octomap)
+                            neighbor.mapDiffs.num_octomaps += 1
+
+                        # Remove the received diffs, in case we didn't get all of them
+                        for received in agent.received:
+                            neighbor.missingDiffs.remove(received)
+
+                except rospy.ServiceException as e:
+                    print(self.id, "error getting map diffs from", neighbor.id, reqs, str(e))
+
     def updateBeacons(self):
         for neighbor in self.neighbors.values():
             # Make sure our beacon list matches our neighbors'
@@ -610,6 +632,9 @@ class MultiAgent(object):
 
             if self.useMonitor:
                 self.publishMonitors()
+
+            # Update all of the map diffs from each robot
+            self.updateMapDiffs()
 
             # Execute the type-specific functions
             if not self.run():
