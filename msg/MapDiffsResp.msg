@@ -1,3 +1,3 @@
 string id
-octomap_merger/OctomapArray mapDiffs
+marble_mapping/OctomapArray mapDiffs
 uint32[] received

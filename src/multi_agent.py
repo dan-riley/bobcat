@@ -4,7 +4,6 @@ import hashlib
 import rospy
 
 from std_msgs.msg import Bool
-from std_msgs.msg import UInt32
 from std_msgs.msg import String
 from nav_msgs.msg import Odometry
 from nav_msgs.msg import Path
@@ -19,9 +18,11 @@ from marble_multi_agent.msg import BeaconArray
 from marble_multi_agent.msg import Goal
 from marble_multi_agent.msg import GoalArray
 from marble_multi_agent.msg import MapDiffsReq
-from marble_multi_agent.srv import GetMapDiffs
-from octomap_merger.msg import OctomapArray
-from octomap_merger.msg import OctomapNeighbors
+from marble_multi_agent.msg import MapDiffsReqArray
+from marble_multi_agent.msg import MapDiffsResp
+from marble_multi_agent.msg import MapDiffsRespArray
+from marble_mapping.msg import OctomapArray
+from marble_mapping.msg import OctomapNeighbors
 
 
 class Agent(object):
@@ -46,7 +47,8 @@ class Agent(object):
         self.atnode = Bool()
         self.mapDiffs = OctomapArray()
         self.mapDiffs.owner = self.id
-        self.numDiffs = UInt32()
+        self.updateMapDiffs = False
+        self.numDiffs = 0
         self.missingDiffs = []
         self.commBeacons = BeaconArray()
         self.newArtifacts = ArtifactArray()
@@ -78,8 +80,8 @@ class Agent(object):
         self.newArtifacts = neighbor.newArtifacts
 
         # Update missing diffs if the neighbor said there are new ones
-        if neighbor.numDiffs.data > self.numDiffs.data:
-            for i in range(self.numDiffs.data, neighbor.numDiffs.data):
+        if neighbor.numDiffs > self.numDiffs:
+            for i in range(self.numDiffs, neighbor.numDiffs):
                 self.missingDiffs.append(i)
             self.numDiffs = neighbor.numDiffs
 
@@ -132,7 +134,7 @@ class Base(object):
         self.simcomm = True
         self.baseArtifacts = []
         self.commBeacons = BeaconArray()
-        self.numDiffs = UInt32()
+        self.numDiffs = 0
 
     def update(self, neighbor):
 
@@ -149,12 +151,15 @@ class BeaconObj(object):
         self.id = agent
         self.owner = owner
         self.pos = Point()
+        self.lastMessage = rospy.get_rostime()
+        self.incomm = False
         self.simcomm = False
         self.active = False
-        self.numDiffs = UInt32()
+        self.numDiffs = 0
 
     def update(self, neighbor):
 
+        self.lastMessage = rospy.get_rostime()
         self.numDiffs = neighbor.numDiffs
 
 
@@ -198,8 +203,8 @@ class DataListener:
                 rospy.Subscriber('/' + self.agent.id + '/' + topics['node'],
                                  Bool, self.Receiver, 'atnode', queue_size=1)
             self.size_sub = \
-                rospy.Subscriber('/' + self.agent.id + '/' + topics['numDiffs'],
-                                 UInt32, self.Receiver, 'numDiffs')
+                rospy.Subscriber('/' + self.agent.id + '/' + topics['mapDiffs'],
+                                 OctomapArray, self.Receiver, 'mapDiffs')
 
     def Receiver(self, data, parameter):
         setattr(self.agent, parameter, data)
@@ -222,6 +227,8 @@ class MultiAgent(object):
         self.solo = rospy.get_param('multi_agent/solo', False)
         # Time without message for lost comm
         self.commThreshold = rospy.Duration(rospy.get_param('multi_agent/commThreshold', 2))
+        # Time to wait before trying another agent for diff map requests
+        self.diffWait = rospy.Duration(rospy.get_param('multi_agent/diffWait', 3))
         # Total number of potential beacons
         totalBeacons = rospy.get_param('multi_agent/totalBeacons', 16)
         # Potential robot neighbors to monitor
@@ -231,13 +238,14 @@ class MultiAgent(object):
         self.numBeacons = len(myBeacons) if myBeacons[0] != '' else 0
         # Topics for publishers
         pubTopic = rospy.get_param('multi_agent/pubTopic', 'ma_data')
+        directCommTopic = rospy.get_param('multi_agent/directCommTopic', 'mesh_comm')
         # Topics for subscribers
         topics = {}
         topics['odometry'] = rospy.get_param('multi_agent/odomTopic', 'odometry')
         topics['exploreGoal'] = rospy.get_param('multi_agent/exploreGoalTopic', 'frontier_goal_pose')
         topics['explorePath'] = rospy.get_param('multi_agent/explorePathTopic', 'planned_path')
         topics['goals'] = rospy.get_param('multi_agent/goalsTopic', 'goal_array')
-        topics['numDiffs'] = rospy.get_param('multi_agent/numDiffsTopic', 'num_diffs')
+        topics['mapDiffs'] = rospy.get_param('multi_agent/mapDiffsTopic', 'map_diffs')
         topics['node'] = rospy.get_param('multi_agent/nodeTopic', 'at_node_center')
         topics['artifacts'] = rospy.get_param('multi_agent/artifactsTopic', 'artifact_array/relay')
 
@@ -246,12 +254,18 @@ class MultiAgent(object):
         self.beaconsArray = []
         self.data_sub = {}
         self.comm_sub = {}
+        self.diffReq_pub = {}
+        self.diffReq_sub = {}
+        self.diffResp_pub = {}
+        self.diffResp_sub = {}
         self.simcomms = {}
         self.commcheck = {}
         self.artifacts = {}
         self.monitor = {}
         self.wait = False  # Change to True to wait for Origin Detection
         self.commListen = False
+        self.lastDiffReq = rospy.Time()
+        self.diffReqs = []
 
         rospy.init_node(self.id + '_multi_agent')
         self.start_time = rospy.get_rostime()
@@ -267,7 +281,19 @@ class MultiAgent(object):
 
         if self.type != 'base':
             subTopic = '/Base/' + pubTopic
-            self.data_sub['base'] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
+            self.data_sub['Base'] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
+
+            # Pairs for map diff requests
+            pubDiffTopic = '/' + self.id + '/' + directCommTopic + '/Base/diff_request'
+            subDiffTopic = '/Base/' + directCommTopic + '/' + self.id + '/diff_request'
+            self.diffReq_pub['Base'] = rospy.Publisher(pubDiffTopic, MapDiffsReqArray, queue_size=1)
+            self.diffReq_sub['Base'] = rospy.Subscriber(subDiffTopic, MapDiffsReqArray, self.MapDiffRequestReceiever, 'Base')
+
+            # Pairs for map diff responses
+            pubDiffTopic = '/' + self.id + '/' + directCommTopic + '/Base/diff_response'
+            subDiffTopic = '/Base/' + directCommTopic + '/' + self.id + '/diff_response'
+            self.diffResp_pub['Base'] = rospy.Publisher(pubDiffTopic, MapDiffsRespArray, queue_size=1)
+            self.diffResp_sub['Base'] = rospy.Subscriber(subDiffTopic, MapDiffsRespArray, self.MapDiffResponseReceiever, 'Base')
 
         if self.useSimComms:
             self.comm_sub[self.id] = \
@@ -280,6 +306,18 @@ class MultiAgent(object):
             # Subscribers for the packaged data
             subTopic = '/' + nid + '/' + pubTopic
             self.data_sub[nid] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
+
+            # Pairs for map diff requests
+            pubDiffTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/diff_request'
+            subDiffTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/diff_request'
+            self.diffReq_pub[nid] = rospy.Publisher(pubDiffTopic, MapDiffsReqArray, queue_size=1)
+            self.diffReq_sub[nid] = rospy.Subscriber(subDiffTopic, MapDiffsReqArray, self.MapDiffRequestReceiever, nid)
+
+            # Pairs for map diff responses
+            pubDiffTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/diff_response'
+            subDiffTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/diff_response'
+            self.diffResp_pub[nid] = rospy.Publisher(pubDiffTopic, MapDiffsRespArray, queue_size=1)
+            self.diffResp_sub[nid] = rospy.Subscriber(subDiffTopic, MapDiffsRespArray, self.MapDiffResponseReceiever, nid)
 
             if self.useSimComms:
                 comm_topic = '/' + nid + '/commcheck'
@@ -318,12 +356,24 @@ class MultiAgent(object):
                 subTopic = '/' + nid + '/' + pubTopic
                 self.data_sub[nid] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
 
+                # Pairs for map diff requests
+                pubDiffTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/diff_request'
+                subDiffTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/diff_request'
+                self.diffReq_pub[nid] = rospy.Publisher(pubDiffTopic, MapDiffsReqArray, queue_size=1)
+                self.diffReq_sub[nid] = rospy.Subscriber(subDiffTopic, MapDiffsReqArray, self.MapDiffRequestReceiever, nid)
+
+                # Pairs for map diff responses
+                pubDiffTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/diff_response'
+                subDiffTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/diff_response'
+                self.diffResp_pub[nid] = rospy.Publisher(pubDiffTopic, MapDiffsRespArray, queue_size=1)
+                self.diffResp_sub[nid] = rospy.Subscriber(subDiffTopic, MapDiffsRespArray, self.MapDiffResponseReceiever, nid)
+
             if self.useSimComms:
                 comm_topic = '/' + nid + '/commcheck'
                 self.comm_sub[nid] = \
                     rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
 
-        self.neighbor_maps_pub = rospy.Publisher('neighbor_maps', OctomapNeighbors, queue_size=1)
+        self.neighbor_maps_pub = rospy.Publisher('neighbor_maps', OctomapNeighbors, latch=True, queue_size=1)
 
         # Publisher for the packaged data
         self.data_pub = rospy.Publisher(pubTopic, AgentMsg, queue_size=1)
@@ -350,7 +400,6 @@ class MultiAgent(object):
         msg.newArtifacts = agent.newArtifacts
         msg.lastMessage.data = agent.lastMessage
         msg.goal = agent.goal
-        msg.numDiffs = agent.numDiffs
 
         # Data that's only sent via direct comms
         if agent.id == self.id:
@@ -358,20 +407,29 @@ class MultiAgent(object):
             msg.type = self.type
             msg.baseArtifacts = self.base.baseArtifacts
             msg.commBeacons.data = self.beaconsArray
+            msg.numDiffs = agent.mapDiffs.num_octomaps
             # TODO this isn't going to work.  Need to figure it out.
             # Think this is fine if we assume beacons always talk to base?
         else:
             msg.status = agent.status
+            msg.numDiffs = agent.numDiffs
 
     def CommCheck(self):
+        if rospy.get_rostime() < self.start_time + self.commThreshold:
+            return
+
+        checkTime = rospy.get_rostime() - self.commThreshold
         # Simply check when the last time we saw a message and set status
         for neighbor in self.neighbors.values():
-            neighbor.incomm = neighbor.lastDirectMessage > rospy.get_rostime() - self.commThreshold
+            neighbor.incomm = neighbor.lastDirectMessage > checkTime
 
-        # TODO Do we need this for beacons?!
+        # Same for beacons
+        for beacon in self.beacons.values():
+            beacon.incomm = beacon.lastMessage > checkTime
+
         # Same with base station
-        if self.type == 'robot' and not self.solo:
-            self.base.incomm = self.base.lastMessage > rospy.get_rostime() - self.commThreshold
+        if self.type != 'base' and not self.solo:
+            self.base.incomm = self.base.lastMessage > checkTime
 
     # Next 3 functions are just for simulated comms.  Otherwise simcomm is True.
     def simCommChecker(self, data, nid):
@@ -394,7 +452,7 @@ class MultiAgent(object):
         # Recursively check who can talk to who
         # TODO removing this enables us to disable comm hopping...might be useful parameter
         for cid in self.commcheck:
-            if self.simcomms[cid].incomm:
+            if cid in self.simcomms and self.simcomms[cid].incomm:
                 self.recurCommCheck(cid)
 
         # Set the simcomm based on the newly modified matrix
@@ -412,7 +470,7 @@ class MultiAgent(object):
         return True
 
     def CommReceiver(self, data):
-        # Wait until everything is initialized before processing any data
+        # Wait until the entire sub-object is initialized before processing any data
         if not self.commListen:
             return
 
@@ -522,49 +580,101 @@ class MultiAgent(object):
                         self.agent.guiGoalPoint = neighbor2.guiGoalPoint
                         self.agent.guiGoalAccept = True
 
-    def updateMapDiffs(self):
+    def MapDiffRequestReceiever(self, req, nid):
+        resp = []
+        for agent in req.agents:
+            nresp = MapDiffsResp()
+            nresp.id = agent.id
+            nresp.mapDiffs.owner = agent.id
+            nresp.mapDiffs.num_octomaps = 0
+            nresp.received = []
+
+            if agent.id == self.id:
+                mapDiffs = self.agent.mapDiffs.octomaps
+            else:
+                mapDiffs = self.neighbors[agent.id].mapDiffs.octomaps
+
+            # Add each requested diff to the message
+            for i in agent.missing:
+                for mapDiff in mapDiffs:
+                    if mapDiff.header.seq == i:
+                        nresp.mapDiffs.octomaps.append(mapDiff)
+                        nresp.mapDiffs.num_octomaps += 1
+                        nresp.received.append(i)
+                        break
+
+            resp.append(nresp)
+
+        self.diffResp_pub[nid].publish(resp)
+
+    def MapDiffResponseReceiever(self, resp, nid):
+        receivedMaps = False
+        for agent in resp.agents:
+            neighbor = self.neighbors[agent.id]
+            # Add the new diffs to our array and update the total
+            for octomap in agent.mapDiffs.octomaps:
+                neighbor.mapDiffs.octomaps.append(octomap)
+                neighbor.mapDiffs.num_octomaps += 1
+                neighbor.updateMapDiffs = True
+                receivedMaps = True
+
+            # Remove the received diffs, in case we didn't get all of them
+            for received in agent.received:
+                neighbor.missingDiffs.remove(received)
+
+        # Clear out the diff request log so we don't skip any
+        if receivedMaps:
+            self.lastDiffReq = rospy.get_rostime() - self.diffWait
+            self.diffReqs = []
+
+    def requestMapDiffs(self):
+        # If we've made a request recently, give it some time to try someone else
+        if rospy.get_rostime() - self.lastDiffReq < self.diffWait:
+            return
+
+        # Build a full request list of all missing diffs
+        requestFrom = False
+        reqs = MapDiffsReqArray()
         for neighbor in self.neighbors.values():
-            reqs = []
-            if neighbor.incomm:
-                # Add our missing diffs
-                if neighbor.missingDiffs:
-                    req = MapDiffsReq()
-                    req.missing = neighbor.missingDiffs
-                    req.id = neighbor.id
-                    reqs.append(req)
+            if neighbor.missingDiffs:
+                req = MapDiffsReq()
+                req.missing = neighbor.missingDiffs
+                req.id = neighbor.id
+                reqs.agents.append(req)
 
-                # Add any other missing diffs.  Asking even if in comm gives best chance
-                for neighbor2 in self.neighbors.values():
-                    if neighbor2.id != neighbor.id and neighbor2.missingDiffs:
-                        req = MapDiffsReq()
-                        req.missing = neighbor2.missingDiffs
-                        req.id = neighbor2.id
-                        reqs.append(req)
+                # Request maps directly from the first one we have missing maps from
+                if not requestFrom and neighbor.incomm:
+                    requestFrom = neighbor.id
 
-            if reqs:
-                # Service call to neighbor for diffs, returning whether any are missing
-                # Remove successful ones from missingDiffs
-                service = '/' + neighbor.id + '/get_map_diffs'
-                rospy.wait_for_service(service, timeout=1)
-                get_map_diffs = rospy.ServiceProxy(service, GetMapDiffs)
+        # If we have any, find someone to request from
+        if reqs.agents:
+            # Try the base station first; stationary presumed more reliable!
+            if not requestFrom and self.id != 'Base' and self.base.incomm and 'Base' not in self.diffReqs:
+                requestFrom = 'Base'
 
-                try:
-                    # Make the service call
-                    resp = get_map_diffs(reqs)
+            # Try beacons next
+            if not requestFrom:
+                for beacon in self.beacons.values():
+                    if self.id != beacon.id and beacon.incomm and beacon.id not in self.diffReqs:
+                        requestFrom = beacon.id
+                        break
 
-                    for agent in resp.agents:
-                        neighbor = self.neighbors[agent.id]
-                        # Add the new diffs to our array and update the total
-                        for octomap in agent.mapDiffs.octomaps:
-                            neighbor.mapDiffs.octomaps.append(octomap)
-                            neighbor.mapDiffs.num_octomaps += 1
+            # Finally try robots
+            if not requestFrom:
+                for neighbor in self.neighbors.values():
+                    if neighbor.incomm and neighbor.id not in self.diffReqs:
+                        requestFrom = neighbor.id
+                        break
 
-                        # Remove the received diffs, in case we didn't get all of them
-                        for received in agent.received:
-                            neighbor.missingDiffs.remove(received)
-
-                except rospy.ServiceException as e:
-                    print(self.id, "error getting map diffs from", neighbor.id, reqs, str(e))
+            # Publish the request to this agent
+            if requestFrom:
+                self.lastDiffReq = rospy.get_rostime()
+                self.diffReqs.append(requestFrom)
+                self.diffReq_pub[requestFrom].publish(reqs)
+            else:
+                # If we're missing a map but don't have anyone to request from, start over
+                self.lastDiffReq = rospy.get_rostime() - self.diffWait
+                self.diffReqs = []
 
     def updateBeacons(self):
         for neighbor in self.neighbors.values():
@@ -633,8 +743,8 @@ class MultiAgent(object):
             if self.useMonitor:
                 self.publishMonitors()
 
-            # Update all of the map diffs from each robot
-            self.updateMapDiffs()
+            # Request any missing map diffs from each robot
+            self.requestMapDiffs()
 
             # Execute the type-specific functions
             if not self.run():
@@ -644,20 +754,26 @@ class MultiAgent(object):
 
             # Build the data message for self and neighbors
             pubData = AgentMsg()
-            neighbor_diffs = OctomapNeighbors()
             self.buildAgentMessage(pubData, self.agent)
+            neighbor_diffs = OctomapNeighbors()
+            pubMapDiffs = False
             for neighbor in self.neighbors.values():
                 msg = NeighborMsg()
                 self.buildAgentMessage(msg, neighbor)
                 pubData.neighbors.append(msg)
 
-                # Get all of the map diffs to publish for the merger
-                neighbor_diffs.neighbors.append(neighbor.mapDiffs)
-                neighbor_diffs.num_neighbors += 1
+                # Only update the mapDiffs and publish if we have new diffs
+                if neighbor.updateMapDiffs:
+                    # Get all of the map diffs to publish for the merger
+                    neighbor_diffs.neighbors.append(neighbor.mapDiffs)
+                    neighbor_diffs.num_neighbors += 1
+                    neighbor.updateMapDiffs = False
+                    pubMapDiffs = True
 
             pubData.header.stamp = rospy.get_rostime()
             self.data_pub.publish(pubData)
-            self.neighbor_maps_pub.publish(neighbor_diffs)
+            if pubMapDiffs:
+                self.neighbor_maps_pub.publish(neighbor_diffs)
 
             rate.sleep()
         return

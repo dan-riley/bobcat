@@ -372,6 +372,7 @@ class MARobot(MultiAgent):
             # May want to consider stopping in place if there is a conflict!
             self.agent.goal = goals[0]
         else:
+            # TODO add check for location of neighbor and don't go there
             # Otherwise, deconflict with neighbor goals
             # Assume conflict to start
             conflict = True

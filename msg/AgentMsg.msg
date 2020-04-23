@@ -8,7 +8,7 @@ string guiTaskValue
 geometry_msgs/PoseStamped guiGoalPoint
 nav_msgs/Odometry odometry
 Goal goal
-std_msgs/UInt32 numDiffs
+uint16 numDiffs
 BeaconArray commBeacons
 AgentArtifact[] baseArtifacts
 marble_artifact_detection_msgs/ArtifactArray newArtifacts

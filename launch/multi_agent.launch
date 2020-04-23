@@ -37,6 +37,8 @@
   <arg name="reverseDrop" default="false" />
   <!-- Topic to publish/subscribe data to neighbors -->
   <arg name="pubTopic" default="ma_data" />
+  <!-- Topic for point to point comms to build send/receive pairs -->
+  <arg name="directCommTopic" default="mesh_comm" />
   <!-- Topic the frontier exploration node listens to to calculate path home -->
   <arg name="homeTopic" default="report_artifact" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
@@ -78,6 +80,7 @@
     <param name="delayDrop" value="$(arg delayDrop)" />
     <param name="reverseDrop" value="$(arg reverseDrop)" />
     <param name="pubTopic" value="$(arg pubTopic)" />
+    <param name="directCommTopic" value="$(arg directCommTopic)" />
     <param name="homeTopic" value="$(arg homeTopic)" />
     <param name="stopTopic" value="$(arg stopTopic)" />
     <param name="waitTopic" value="$(arg waitTopic)" />
@@ -94,9 +97,5 @@
     <param name="anchorX" value="$(arg anchorX)" />
     <param name="anchorY" value="$(arg anchorY)" />
     <param name="anchorZ" value="$(arg anchorZ)" />
-  </node>
-
-  <node ns="$(arg ns)" pkg="marble_multi_agent" type="get_map_diffs.py" name="get_map_diffs" output="screen">
-    <param name="mapDiffsTopic" value="$(arg mapDiffsTopic)" />
   </node>
 </launch>
