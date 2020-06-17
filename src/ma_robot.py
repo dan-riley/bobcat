@@ -461,6 +461,12 @@ class MARobot(MultiAgent):
         if self.newTask:
             print(self.id, 'received external new task', self.newTask)
 
+        # Temporary check for robot movement
+        if (False):
+            self.updateHistory()
+            if len(self.history) > 3 and getDist(self.history[0].position, self.history[-1].position) < 0.5 and self.id != 'A01':
+                print(self.id, 'has not moved!')
+
         checkBeacon = True
         # Manage the newest task sent
         if self.agent.guiAccept:

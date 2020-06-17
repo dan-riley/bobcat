@@ -16,4 +16,6 @@
   <depend>std_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>marble_artifact_detection_msgs</depend>
+  <depend>marble_mapping</depend>
 </package>

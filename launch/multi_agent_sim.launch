@@ -3,11 +3,11 @@
   <arg name="vehicle" default="X1" />
   <arg name="type" default="robot" />
   <arg name="myBeacons" default="" />
+  <arg name="potentialNeighbors" default="X1,X2" />
   <arg name="delayDrop" default="false" />
 
   <include file="$(find marble_multi_agent)/launch/multi_agent.launch">
     <arg name="totalBeacons" value="8" />
-    <arg name="potentialNeighbors" value="X1,X2" />
     <arg name="simcomms" value="true" />
     <arg name="anchorDropDist" value="30" />
     <arg name="dropDist" value="25" />
@@ -20,6 +20,7 @@
     <arg name="vehicle" value="$(arg vehicle)" />
     <arg name="type" value="$(arg type)" />
     <arg name="myBeacons" value="$(arg myBeacons)" />
+    <arg name="potentialNeighbors" value="$(arg potentialNeighbors)" />
     <arg name="delayDrop" value="$(arg delayDrop)" />
   </include>
 </launch>
