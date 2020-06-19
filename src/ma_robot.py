@@ -71,6 +71,8 @@ class MARobot(MultiAgent):
 
         # Distance to maintain goal point deconfliction
         self.deconflictRadius = rospy.get_param('multi_agent/deconflictRadius', 2.5)
+        # Time stopped to report if stuck
+        self.stopCheck = rospy.get_param('multi_agent/stopCheck', 30)
         # Distance from Anchor to drop beacons automatically
         self.maxAnchorDist = rospy.get_param('multi_agent/anchorDropDist', 100)
         # Distance to drop beacons automatically
@@ -85,7 +87,7 @@ class MARobot(MultiAgent):
         self.reverseDrop = rospy.get_param('multi_agent/reverseDrop', False)
         # Topics for publishers
         homeTopic = rospy.get_param('multi_agent/homeTopic', 'report_artifact')
-        stopTopic = rospy.get_param('multi_agent/stopTopic', 'stop_for_beacon_drop')
+        stopTopic = rospy.get_param('multi_agent/stopTopic', 'nearness_controller/enable_control')
         waitTopic = rospy.get_param('multi_agent/waitTopic', 'origin_detection_status')
         commTopic = rospy.get_param('multi_agent/commTopic', 'base_comm')
         goalTopic = rospy.get_param('multi_agent/goalTopic', 'ma_goal')
@@ -97,15 +99,19 @@ class MARobot(MultiAgent):
         self.anchorPos.y = rospy.get_param('multi_agent/anchorY', 0.0)
         self.anchorPos.z = rospy.get_param('multi_agent/anchorZ', 0.1)
 
+        self.startedMission = False
+        self.initialPose = False
         self.history = []
         self.hislen = self.rate * 10  # How long the odometry history should be
         self.minAnchorDist = 10  # Minimum distance before a beacon is ever dropped
         self.report = False
         self.newTask = False
+        self.newTaskExternal = False
         self.taskCount = 0
         self.beaconCommLost = 0
         self.stopStart = True
         self.mode = 'Explore'
+        self.stuck = 0
 
         self.task_pub = rospy.Publisher('task', String, queue_size=10)
         self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
@@ -134,8 +140,10 @@ class MARobot(MultiAgent):
         normalStatus = ['Able to plan home', 'Exploring']
         if data.data != self.agent.status and data.data not in normalStatus:
             self.newTask = data.data
+            self.newTaskExternal = True
         elif self.taskCount > 10:
             self.newTask = False
+            self.newTaskExternal = False
             self.taskCount = 0
         else:
             self.taskCount += 1
@@ -151,9 +159,24 @@ class MARobot(MultiAgent):
         self.pub_guiTask[self.agent.guiTaskName].publish(data)
 
     def updateHistory(self):
+        # Check whether we've started the mission by moving 5 meters
+        if not self.initialPose:
+            self.initialPose = self.agent.odometry.pose.pose
+        elif not self.startedMission:
+            # Do this here so we only do this calculation until leaving the starting area
+            if getDist(self.agent.odometry.pose.pose.position, self.initialPose.position) > 5:
+                self.startedMission = True
+
         self.history.append(self.agent.odometry.pose.pose)
         if len(self.history) > self.hislen:
             self.history = self.history[-self.hislen:]
+
+    def updateStatus(self, status):
+        if self.newTask and status not in self.newTask:
+            self.newTask += '+++' + status
+        else:
+            self.newTask = status
+            self.newTaskExternal = False
 
     def getStatus(self):
         if self.newTask:
@@ -226,7 +249,7 @@ class MARobot(MultiAgent):
                     rospy.sleep(10)
 
                 # Resume the mission
-                self.stop_pub.publish(False)
+                self.stop_pub.publish(True)
                 self.deconflictExplore()
                 self.deploy_pub.publish(False)
 
@@ -254,8 +277,6 @@ class MARobot(MultiAgent):
             # We're connected to the mesh, either through anchor or beacon(s)
             if self.base.incomm:
                 self.beaconCommLost = 0
-                # Update our movement history.  May need to move up one level if we use out of comm
-                self.updateHistory()
 
                 # Once we pass the maxDist we could set a flag so we don't keep recalculating this
                 anchorDist = getDist(pose.position, self.anchorPos)
@@ -388,7 +409,7 @@ class MARobot(MultiAgent):
                         if goals[i].cost.data > neighbor.goal.cost.data:
                             conflict = True
                             if not self.newTask:
-                                self.newTask = 'Replanning'
+                                self.updateStatus('Replanning')
                             print(str(self.id) + " replanning")
                             # Don't need to check any more neighbors for this goal if conflict
                             break
@@ -409,7 +430,7 @@ class MARobot(MultiAgent):
         # Stop the robot by publishing no path, but don't change the displayed goal
         self.agent.status = 'Stop'
         self.task_pub.publish(self.agent.status)
-        self.stop_pub.publish(True)
+        self.stop_pub.publish(False)
 
         if self.stopStart and self.useSimComms:
             print(self.id, "stopping")
@@ -456,16 +477,30 @@ class MARobot(MultiAgent):
         # Update our comm status for anyone who needs it
         self.comm_pub.publish(self.base.incomm)
 
+        # Update movement history
+        self.updateHistory()
+
+        # Do status checks once we've started the mission
+        if self.startedMission and self.agent.status != 'Stop':
+            if self.agent.goal.path.poses and len(self.history) == self.hislen:
+                # Check if we've been stopped if we have a goal
+                if getDist(self.history[0].position, self.history[-1].position) < 0.5:
+                    self.stuck += 1
+                else:
+                    self.stuck = 0
+
+                if self.stuck > self.stopCheck:
+                    self.updateStatus('Stuck')
+                    print(self.id, 'has not moved!')
+            elif not self.agent.goal.path.poses:
+                # Report no path available
+                self.updateStatus('No Path')
+                print(self.id, 'no path!')
+
         # For future use, to handle tasks coming from the topic
         # Maybe this should just be separate topic
-        if self.newTask:
+        if self.newTask and self.newTaskExternal:
             print(self.id, 'received external new task', self.newTask)
-
-        # Temporary check for robot movement
-        if (False):
-            self.updateHistory()
-            if len(self.history) > 3 and getDist(self.history[0].position, self.history[-1].position) < 0.5 and self.id != 'A01':
-                print(self.id, 'has not moved!')
 
         checkBeacon = True
         # Manage the newest task sent
@@ -485,7 +520,7 @@ class MARobot(MultiAgent):
                     self.mode = 'Explore'
 
                 # Disable the estop.  'Stop' will re-enable it
-                self.stop_pub.publish(False)
+                self.stop_pub.publish(True)
             else:
                 self.publishGUITask()
 
@@ -535,7 +570,7 @@ class MARobot(MultiAgent):
                 self.mode = 'Explore'
             else:
                 if not self.newTask:
-                    self.newTask = 'Regain comms deploy'
+                    self.updateStatus('Regain comms deploy')
                 self.setGoalPoint('Home')
         elif self.agent.guiGoalAccept:
             if (getDist(self.agent.odometry.pose.pose.position,

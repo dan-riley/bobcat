@@ -23,6 +23,8 @@
   <arg name="deconflictRadius" default="2.5" />
   <!-- How long without a message to consider 'lost comms' -->
   <arg name="commThreshold" default="2" />
+  <!-- How long to consider the robot as 'stuck'.  Use 3600 to disable for 1 hour -->
+  <arg name="stopCheck" default="30" />
   <!-- How far to drive from the anchor before automatically dropping a beacon -->
   <arg name="anchorDropDist" default="100" />
   <!-- How far to drive before automatically dropping a beacon -->
@@ -42,7 +44,7 @@
   <!-- Topic the frontier exploration node listens to to calculate path home -->
   <arg name="homeTopic" default="report_artifact" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
-  <arg name="stopTopic" default="estop_cmd" />
+  <arg name="stopTopic" default="nearness_controller/enable_control" />
   <arg name="waitTopic" default="origin_detection_status" />
   <arg name="commTopic" default="base_comm" />
   <arg name="odomTopic" default="odometry" />
@@ -73,6 +75,7 @@
     <param name="solo" value="$(arg solo)" />
     <param name="deconflictRadius" value="$(arg deconflictRadius)" />
     <param name="commThreshold" value="$(arg commThreshold)" />
+    <param name="stopCheck" value="$(arg stopCheck)" />
     <param name="anchorDropDist" value="$(arg anchorDropDist)" />
     <param name="dropDist" value="$(arg dropDist)" />
     <param name="junctionDist" value="$(arg junctionDist)" />
