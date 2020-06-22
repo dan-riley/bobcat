@@ -11,12 +11,20 @@ from std_msgs.msg import String
 from nav_msgs.msg import Path
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
-from gazebo_msgs.msg import ModelState
-from gazebo_msgs.srv import SetModelState
-from subt_msgs.srv import SetPose
 from marble_origin_detection_msgs.msg import OriginDetectionStatus
 
 from multi_agent import MultiAgent, ArtifactReport
+
+# Import Ignition/Gazebo only if running in the sim so the robot doesn't need them
+if rospy.get_param('multi_agent/simcomms', False):
+    # Switch for ignition or gazebo here temporarily until I find a better place
+    useIgnition = True
+
+    from gazebo_msgs.msg import ModelState
+    if useIgnition:
+        from subt_msgs.srv import SetPose
+    else:
+        from gazebo_msgs.srv import SetModelState
 
 
 def getDist(pos1, pos2):
@@ -202,11 +210,9 @@ class MARobot(MultiAgent):
             self.task_pub.publish(self.agent.status)
 
             if self.useSimComms:
-                # Switch for ignition or gazebo here temporarily until I find a better place
-                use_ignition = True
                 # Either need to identify location before comm loss, or make this a guidance
                 # command to return to a point in range
-                if use_ignition:
+                if useIgnition:
                     service = '/subt/set_pose'
                     rospy.wait_for_service(service)
                     set_state = rospy.ServiceProxy(service, SetPose)
@@ -234,7 +240,7 @@ class MARobot(MultiAgent):
             try:
                 if self.useSimComms:
                     # Drop the simulated beacon, and pause to simulate drop
-                    if use_ignition:
+                    if useIgnition:
                         ret = set_state(deploy, pose)
                         rospy.sleep(3)
                         print(ret.success)
