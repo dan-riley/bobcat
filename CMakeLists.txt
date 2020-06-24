@@ -23,10 +23,10 @@ add_message_files(
   NeighborMsg.msg
   Goal.msg
   GoalArray.msg
-  MapDiffsReq.msg
-  MapDiffsReqArray.msg
-  MapDiffsResp.msg
-  MapDiffsRespArray.msg
+  DMReq.msg
+  DMReqArray.msg
+  DMResp.msg
+  DMRespArray.msg
 )
 
 generate_messages(

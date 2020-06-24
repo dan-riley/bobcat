@@ -10,6 +10,7 @@ from nav_msgs.msg import Path
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
 from marble_artifact_detection_msgs.msg import ArtifactArray
+from marble_artifact_detection_msgs.msg import ArtifactImg
 from marble_multi_agent.msg import AgentMsg
 from marble_multi_agent.msg import NeighborMsg
 from marble_multi_agent.msg import CommsCheckArray
@@ -17,10 +18,10 @@ from marble_multi_agent.msg import Beacon
 from marble_multi_agent.msg import BeaconArray
 from marble_multi_agent.msg import Goal
 from marble_multi_agent.msg import GoalArray
-from marble_multi_agent.msg import MapDiffsReq
-from marble_multi_agent.msg import MapDiffsReqArray
-from marble_multi_agent.msg import MapDiffsResp
-from marble_multi_agent.msg import MapDiffsRespArray
+from marble_multi_agent.msg import DMReq
+from marble_multi_agent.msg import DMReqArray
+from marble_multi_agent.msg import DMResp
+from marble_multi_agent.msg import DMRespArray
 from marble_mapping.msg import OctomapArray
 from marble_mapping.msg import OctomapNeighbors
 
@@ -52,7 +53,9 @@ class Agent(object):
         self.missingDiffs = []
         self.commBeacons = BeaconArray()
         self.newArtifacts = ArtifactArray()
-        self.artifacts = {}
+        self.newArtifactImages = ArtifactImg()
+        self.images = []
+        self.missingImages = []
         self.lastMessage = rospy.get_rostime()
         self.lastDirectMessage = self.lastMessage
         self.lastArtifact = ''
@@ -82,8 +85,16 @@ class Agent(object):
         # Update missing diffs if the neighbor said there are new ones
         if neighbor.numDiffs > self.numDiffs:
             for i in range(self.numDiffs, neighbor.numDiffs):
-                self.missingDiffs.append(i)
+                if i not in self.missingDiffs:
+                    self.missingDiffs.append(i)
             self.numDiffs = neighbor.numDiffs
+
+        # Identify new images available for request
+        if neighbor.images != self.images:
+            for image in neighbor.images:
+                if image not in self.images and image not in self.missingImages:
+                    self.missingImages.append(image)
+            self.images = neighbor.images
 
         if neighbor.guiTaskName and neighbor.guiTaskName != self.guiTaskName:
             self.guiTaskName = neighbor.guiTaskName
@@ -106,22 +117,10 @@ class Agent(object):
             self.updateCommon(neighbor)
         else:
             self.updateCommon(neighbor)
-            self.numDiffs = neighbor.numDiffs
             self.cid = neighbor.cid
             self.incomm = False
             # Update the timestamp with the offset between machines
             self.lastMessage = neighbor.lastMessage.data + offset
-
-    # def update(self, pos, goal, goalType, cost):
-    #     self.pos = pos
-    #     self.goal = goal
-    #     self.goalType = goalType
-    #     self.cost = cost
-    #     self.incomm = True
-    #
-    # def history(self, stateHistory, path):
-    #     self.stateHistory = stateHistory
-    #     self.path = path
 
 
 class Base(object):
@@ -134,14 +133,11 @@ class Base(object):
         self.simcomm = True
         self.baseArtifacts = []
         self.commBeacons = BeaconArray()
-        self.numDiffs = 0
 
     def update(self, neighbor):
-
         self.lastMessage = rospy.get_rostime()
         self.commBeacons = neighbor.commBeacons
         self.baseArtifacts = neighbor.baseArtifacts
-        self.numDiffs = neighbor.numDiffs
 
 
 class BeaconObj(object):
@@ -155,12 +151,9 @@ class BeaconObj(object):
         self.incomm = False
         self.simcomm = False
         self.active = False
-        self.numDiffs = 0
 
     def update(self, neighbor):
-
         self.lastMessage = rospy.get_rostime()
-        self.numDiffs = neighbor.numDiffs
 
 
 class ArtifactReport:
@@ -169,12 +162,15 @@ class ArtifactReport:
     Holds full artifact message so neighbors can be fused.
     """
 
-    def __init__(self, artifact, artifact_id):
+    def __init__(self, agent_id, artifact, artifact_id):
         self.id = artifact_id
+        self.agent_id = agent_id
         self.artifact = artifact
         self.reported = False
         self.new = True
         self.firstSeen = rospy.get_rostime()
+        self.image = ArtifactImg()
+        self.lastPublished = rospy.Time()
 
 
 class DataListener:
@@ -187,6 +183,9 @@ class DataListener:
             self.artifact_sub = \
                 rospy.Subscriber('/' + self.agent.id + '/' + topics['artifacts'],
                                  ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
+            self.artifact_images_sub = \
+                rospy.Subscriber('/' + self.agent.id + '/' + topics['artifactImages'],
+                                 ArtifactImg, self.Receiver, 'newArtifactImages', queue_size=1)
             self.odom_sub = \
                 rospy.Subscriber('/' + self.agent.id + '/' + topics['odometry'],
                                  Odometry, self.Receiver, 'odometry', queue_size=1)
@@ -227,8 +226,8 @@ class MultiAgent(object):
         self.solo = rospy.get_param('multi_agent/solo', False)
         # Time without message for lost comm
         self.commThreshold = rospy.Duration(rospy.get_param('multi_agent/commThreshold', 2))
-        # Time to wait before trying another agent for diff map requests
-        self.diffWait = rospy.Duration(rospy.get_param('multi_agent/diffWait', 3))
+        # Time to wait before trying another agent for direct message requests
+        self.dmWait = rospy.Duration(rospy.get_param('multi_agent/dmWait', 3))
         # Total number of potential beacons
         totalBeacons = rospy.get_param('multi_agent/totalBeacons', 16)
         # Potential robot neighbors to monitor
@@ -248,24 +247,25 @@ class MultiAgent(object):
         topics['mapDiffs'] = rospy.get_param('multi_agent/mapDiffsTopic', 'map_diffs')
         topics['node'] = rospy.get_param('multi_agent/nodeTopic', 'at_node_center')
         topics['artifacts'] = rospy.get_param('multi_agent/artifactsTopic', 'artifact_array/relay')
+        topics['artifactImages'] = rospy.get_param('multi_agent/artifactImagesTopic', 'artifact_image_to_base')
 
         self.neighbors = {}
         self.beacons = {}
         self.beaconsArray = []
         self.data_sub = {}
         self.comm_sub = {}
-        self.diffReq_pub = {}
-        self.diffReq_sub = {}
-        self.diffResp_pub = {}
-        self.diffResp_sub = {}
+        self.dmReq_pub = {}
+        self.dmReq_sub = {}
+        self.dmResp_pub = {}
+        self.dmResp_sub = {}
         self.simcomms = {}
         self.commcheck = {}
         self.artifacts = {}
         self.monitor = {}
         self.wait = False  # Change to True to wait for Origin Detection
         self.commListen = False
-        self.lastDiffReq = rospy.Time()
-        self.diffReqs = []
+        self.lastDMReq = rospy.Time()
+        self.dmReqs = []
 
         rospy.init_node(self.id + '_multi_agent')
         self.start_time = rospy.get_rostime()
@@ -283,17 +283,17 @@ class MultiAgent(object):
             subTopic = '/Base/' + pubTopic
             self.data_sub['Base'] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
 
-            # Pairs for map diff requests
-            pubDiffTopic = '/' + self.id + '/' + directCommTopic + '/Base/diff_request'
-            subDiffTopic = '/Base/' + directCommTopic + '/' + self.id + '/diff_request'
-            self.diffReq_pub['Base'] = rospy.Publisher(pubDiffTopic, MapDiffsReqArray, queue_size=1)
-            self.diffReq_sub['Base'] = rospy.Subscriber(subDiffTopic, MapDiffsReqArray, self.MapDiffRequestReceiever, 'Base')
+            # Pairs for direct message requests
+            pubDMTopic = '/' + self.id + '/' + directCommTopic + '/Base/dm_request'
+            subDMTopic = '/Base/' + directCommTopic + '/' + self.id + '/dm_request'
+            self.dmReq_pub['Base'] = rospy.Publisher(pubDMTopic, DMReqArray, queue_size=1)
+            self.dmReq_sub['Base'] = rospy.Subscriber(subDMTopic, DMReqArray, self.DMRequestReceiever, 'Base')
 
-            # Pairs for map diff responses
-            pubDiffTopic = '/' + self.id + '/' + directCommTopic + '/Base/diff_response'
-            subDiffTopic = '/Base/' + directCommTopic + '/' + self.id + '/diff_response'
-            self.diffResp_pub['Base'] = rospy.Publisher(pubDiffTopic, MapDiffsRespArray, queue_size=1)
-            self.diffResp_sub['Base'] = rospy.Subscriber(subDiffTopic, MapDiffsRespArray, self.MapDiffResponseReceiever, 'Base')
+            # Pairs for direct message responses
+            pubDMTopic = '/' + self.id + '/' + directCommTopic + '/Base/dm_response'
+            subDMTopic = '/Base/' + directCommTopic + '/' + self.id + '/dm_response'
+            self.dmResp_pub['Base'] = rospy.Publisher(pubDMTopic, DMRespArray, queue_size=1)
+            self.dmResp_sub['Base'] = rospy.Subscriber(subDMTopic, DMRespArray, self.DMResponseReceiever, 'Base')
 
         if self.useSimComms:
             self.comm_sub[self.id] = \
@@ -307,17 +307,17 @@ class MultiAgent(object):
             subTopic = '/' + nid + '/' + pubTopic
             self.data_sub[nid] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
 
-            # Pairs for map diff requests
-            pubDiffTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/diff_request'
-            subDiffTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/diff_request'
-            self.diffReq_pub[nid] = rospy.Publisher(pubDiffTopic, MapDiffsReqArray, queue_size=1)
-            self.diffReq_sub[nid] = rospy.Subscriber(subDiffTopic, MapDiffsReqArray, self.MapDiffRequestReceiever, nid)
+            # Pairs for direct message requests
+            pubDMTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/dm_request'
+            subDMTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/dm_request'
+            self.dmReq_pub[nid] = rospy.Publisher(pubDMTopic, DMReqArray, queue_size=1)
+            self.dmReq_sub[nid] = rospy.Subscriber(subDMTopic, DMReqArray, self.DMRequestReceiever, nid)
 
-            # Pairs for map diff responses
-            pubDiffTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/diff_response'
-            subDiffTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/diff_response'
-            self.diffResp_pub[nid] = rospy.Publisher(pubDiffTopic, MapDiffsRespArray, queue_size=1)
-            self.diffResp_sub[nid] = rospy.Subscriber(subDiffTopic, MapDiffsRespArray, self.MapDiffResponseReceiever, nid)
+            # Pairs for direct message responses
+            pubDMTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/dm_response'
+            subDMTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/dm_response'
+            self.dmResp_pub[nid] = rospy.Publisher(pubDMTopic, DMRespArray, queue_size=1)
+            self.dmResp_sub[nid] = rospy.Subscriber(subDMTopic, DMRespArray, self.DMResponseReceiever, nid)
 
             if self.useSimComms:
                 comm_topic = '/' + nid + '/commcheck'
@@ -340,6 +340,8 @@ class MultiAgent(object):
                     rospy.Publisher(topic + 'path', Path, queue_size=10)
                 self.monitor[nid]['artifacts'] = \
                     rospy.Publisher(topic + 'artifacts', ArtifactArray, queue_size=10)
+                self.monitor[nid]['image'] = \
+                    rospy.Publisher(topic + 'image', ArtifactImg, queue_size=10, latch=True)
 
         # Setup the beacons.  For real robots the names shouldn't matter as long as consistent
         for i in range(1, totalBeacons + 1):
@@ -356,17 +358,17 @@ class MultiAgent(object):
                 subTopic = '/' + nid + '/' + pubTopic
                 self.data_sub[nid] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
 
-                # Pairs for map diff requests
-                pubDiffTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/diff_request'
-                subDiffTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/diff_request'
-                self.diffReq_pub[nid] = rospy.Publisher(pubDiffTopic, MapDiffsReqArray, queue_size=1)
-                self.diffReq_sub[nid] = rospy.Subscriber(subDiffTopic, MapDiffsReqArray, self.MapDiffRequestReceiever, nid)
+                # Pairs for direct message requests
+                pubDMTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/dm_request'
+                subDMTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/dm_request'
+                self.dmReq_pub[nid] = rospy.Publisher(pubDMTopic, DMReqArray, queue_size=1)
+                self.dmReq_sub[nid] = rospy.Subscriber(subDMTopic, DMReqArray, self.DMRequestReceiever, nid)
 
-                # Pairs for map diff responses
-                pubDiffTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/diff_response'
-                subDiffTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/diff_response'
-                self.diffResp_pub[nid] = rospy.Publisher(pubDiffTopic, MapDiffsRespArray, queue_size=1)
-                self.diffResp_sub[nid] = rospy.Subscriber(subDiffTopic, MapDiffsRespArray, self.MapDiffResponseReceiever, nid)
+                # Pairs for direct message responses
+                pubDMTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/dm_response'
+                subDMTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/dm_response'
+                self.dmResp_pub[nid] = rospy.Publisher(pubDMTopic, DMRespArray, queue_size=1)
+                self.dmResp_sub[nid] = rospy.Subscriber(subDMTopic, DMRespArray, self.DMResponseReceiever, nid)
 
             if self.useSimComms:
                 comm_topic = '/' + nid + '/commcheck'
@@ -386,6 +388,10 @@ class MultiAgent(object):
             self.monitor[neighbor.id]['goal'].publish(neighbor.goal.pose)
             self.monitor[neighbor.id]['path'].publish(neighbor.goal.path)
             self.monitor[neighbor.id]['artifacts'].publish(neighbor.newArtifacts)
+        for artifact in self.artifacts.values():
+            if artifact.image.image_id and rospy.get_rostime() - artifact.lastPublished > rospy.Duration(60) and artifact.agent_id != self.id:
+                self.monitor[artifact.agent_id]['image'].publish(artifact.image)
+                artifact.lastPublished = rospy.get_rostime()
 
     def getStatus(self):
         return self.agent.status
@@ -410,9 +416,15 @@ class MultiAgent(object):
             msg.numDiffs = agent.mapDiffs.num_octomaps
             # TODO this isn't going to work.  Need to figure it out.
             # Think this is fine if we assume beacons always talk to base?
+
+            # Build the images list from actually received images
+            for artifact in self.artifacts.values():
+                if artifact.image.image_id and artifact.agent_id == self.id:
+                    msg.images.append(artifact.image.image_id)
         else:
             msg.status = agent.status
             msg.numDiffs = agent.numDiffs
+            msg.images = agent.images
 
     def CommCheck(self):
         if rospy.get_rostime() < self.start_time + self.commThreshold:
@@ -526,6 +538,7 @@ class MultiAgent(object):
             self.neighbors[data.id].update(data, offset, self.id)
 
             # Update the base station artifacts list if it's newer from this neighbor
+            # TODO this isn't working
             if data.lastMessage.data + offset + rospy.Duration(1) > self.base.lastMessage:
                 self.base.baseArtifacts = data.baseArtifacts
                 for agent in data.baseArtifacts:
@@ -580,35 +593,45 @@ class MultiAgent(object):
                         self.agent.guiGoalPoint = neighbor2.guiGoalPoint
                         self.agent.guiGoalAccept = True
 
-    def MapDiffRequestReceiever(self, req, nid):
+    def addMapDiffs(self, nresp, agent):
+        nresp.mapDiffs.owner = agent.id
+        nresp.mapDiffs.num_octomaps = 0
+
+        if agent.id == self.id:
+            mapDiffs = self.agent.mapDiffs.octomaps
+        else:
+            mapDiffs = self.neighbors[agent.id].mapDiffs.octomaps
+
+        # Add each requested diff to the message
+        for i in agent.missingDiffs:
+            for mapDiff in mapDiffs:
+                if mapDiff.header.seq == i:
+                    nresp.mapDiffs.octomaps.append(mapDiff)
+                    nresp.mapDiffs.num_octomaps += 1
+                    break
+
+    def addImages(self, nresp, agent):
+        # Add each requested image to the message
+        for i in agent.missingImages:
+            for artifact in self.artifacts.values():
+                if artifact.image.image_id == i:
+                    nresp.images.append(artifact.image)
+                    break
+
+    def DMRequestReceiever(self, req, nid):
         resp = []
         for agent in req.agents:
-            nresp = MapDiffsResp()
+            nresp = DMResp()
             nresp.id = agent.id
-            nresp.mapDiffs.owner = agent.id
-            nresp.mapDiffs.num_octomaps = 0
-            nresp.received = []
 
-            if agent.id == self.id:
-                mapDiffs = self.agent.mapDiffs.octomaps
-            else:
-                mapDiffs = self.neighbors[agent.id].mapDiffs.octomaps
-
-            # Add each requested diff to the message
-            for i in agent.missing:
-                for mapDiff in mapDiffs:
-                    if mapDiff.header.seq == i:
-                        nresp.mapDiffs.octomaps.append(mapDiff)
-                        nresp.mapDiffs.num_octomaps += 1
-                        nresp.received.append(i)
-                        break
-
+            self.addMapDiffs(nresp, agent)
+            self.addImages(nresp, agent)
             resp.append(nresp)
 
-        self.diffResp_pub[nid].publish(resp)
+        self.dmResp_pub[nid].publish(resp)
 
-    def MapDiffResponseReceiever(self, resp, nid):
-        receivedMaps = False
+    def DMResponseReceiever(self, resp, nid):
+        receivedDM = False
         for agent in resp.agents:
             neighbor = self.neighbors[agent.id]
             # Add the new diffs to our array and update the total
@@ -616,65 +639,84 @@ class MultiAgent(object):
                 neighbor.mapDiffs.octomaps.append(octomap)
                 neighbor.mapDiffs.num_octomaps += 1
                 neighbor.updateMapDiffs = True
-                receivedMaps = True
+                # Remove the received diffs, in case we didn't get all of them
+                neighbor.missingDiffs.remove(octomap.header.seq)
+                receivedDM = True
 
-            # Remove the received diffs, in case we didn't get all of them
-            for received in agent.received:
-                neighbor.missingDiffs.remove(received)
+            # Add the new images to our artifacts
+            for image in agent.images:
+                for artifact in self.artifacts.values():
+                    if artifact.artifact.image_id == image.image_id:
+                        artifact.image = image
+                        # Remove the received image, in case we didn't get all of them
+                        neighbor.missingImages.remove(image.image_id)
+                        receivedDM = True
+                        break
 
-        # Clear out the diff request log so we don't skip any
-        if receivedMaps:
-            self.lastDiffReq = rospy.get_rostime() - self.diffWait
-            self.diffReqs = []
+        # Clear out the request log so we don't skip any
+        if receivedDM:
+            self.lastDMReq = rospy.get_rostime() - self.dmWait
+            self.dmReqs = []
 
-    def requestMapDiffs(self):
+    def requestMissing(self):
         # If we've made a request recently, give it some time to try someone else
-        if rospy.get_rostime() - self.lastDiffReq < self.diffWait:
+        if rospy.get_rostime() - self.lastDMReq < self.dmWait:
             return
 
         # Build a full request list of all missing diffs
         requestFrom = False
-        reqs = MapDiffsReqArray()
+        reqs = DMReqArray()
         for neighbor in self.neighbors.values():
-            if neighbor.missingDiffs:
-                req = MapDiffsReq()
-                req.missing = neighbor.missingDiffs
-                req.id = neighbor.id
-                reqs.agents.append(req)
+            # This neighbors' request
+            req = DMReq()
+            req.id = neighbor.id
+            addRequest = False
 
-                # Request maps directly from the first one we have missing maps from
+            # Look for missing maps and add to request
+            if neighbor.missingDiffs:
+                req.missingDiffs = neighbor.missingDiffs
+                addRequest = True
+
+            # Look for missing images and add to request
+            if neighbor.missingImages:
+                req.missingImages = neighbor.missingImages
+                addRequest = True
+
+            if addRequest:
+                reqs.agents.append(req)
+                # Request directly from the first one we have missing maps from
                 if not requestFrom and neighbor.incomm:
                     requestFrom = neighbor.id
 
         # If we have any, find someone to request from
         if reqs.agents:
             # Try the base station first; stationary presumed more reliable!
-            if not requestFrom and self.id != 'Base' and self.base.incomm and 'Base' not in self.diffReqs:
+            if not requestFrom and self.id != 'Base' and self.base.incomm and 'Base' not in self.dmReqs:
                 requestFrom = 'Base'
 
             # Try beacons next
             if not requestFrom:
                 for beacon in self.beacons.values():
-                    if self.id != beacon.id and beacon.incomm and beacon.id not in self.diffReqs:
+                    if self.id != beacon.id and beacon.incomm and beacon.id not in self.dmReqs:
                         requestFrom = beacon.id
                         break
 
             # Finally try robots
             if not requestFrom:
                 for neighbor in self.neighbors.values():
-                    if neighbor.incomm and neighbor.id not in self.diffReqs:
+                    if neighbor.incomm and neighbor.id not in self.dmReqs:
                         requestFrom = neighbor.id
                         break
 
             # Publish the request to this agent
             if requestFrom:
-                self.lastDiffReq = rospy.get_rostime()
-                self.diffReqs.append(requestFrom)
-                self.diffReq_pub[requestFrom].publish(reqs)
+                self.lastDMReq = rospy.get_rostime()
+                self.dmReqs.append(requestFrom)
+                self.dmReq_pub[requestFrom].publish(reqs)
             else:
                 # If we're missing a map but don't have anyone to request from, start over
-                self.lastDiffReq = rospy.get_rostime() - self.diffWait
-                self.diffReqs = []
+                self.lastDMReq = rospy.get_rostime() - self.dmWait
+                self.dmReqs = []
 
     def updateBeacons(self):
         for neighbor in self.neighbors.values():
@@ -702,18 +744,20 @@ class MultiAgent(object):
 
         self.beaconsArray = commBeacons
 
-    def baseArtifacts(self):
+    def updateArtifacts(self):
         for neighbor in self.neighbors.values():
-            if neighbor.incomm:
-                # Check the artifact list received from the artifact manager for new artifacts
-                for artifact in neighbor.newArtifacts.artifacts:
-                    artifact_id = (str(artifact.position.x) +
-                                   str(artifact.position.y) +
-                                   str(artifact.position.z))
-                    if artifact_id not in self.artifacts:
-                        self.artifacts[artifact_id] = ArtifactReport(artifact, artifact_id)
-                        print(self.id, 'new artifact from', neighbor.id, artifact.obj_class, artifact_id)
+            # Check the artifact list received from the artifact manager for new artifacts
+            updateString = False
+            for artifact in neighbor.newArtifacts.artifacts:
+                artifact_id = (str(artifact.position.x) +
+                               str(artifact.position.y) +
+                               str(artifact.position.z))
+                if artifact_id not in self.artifacts:
+                    updateString = True
+                    self.artifacts[artifact_id] = ArtifactReport(neighbor.id, artifact, artifact_id)
+                    print(self.id, 'new artifact from', neighbor.id, artifact.obj_class, artifact_id)
 
+            if updateString:
                 artifactString = repr(neighbor.newArtifacts.artifacts).encode('utf-8')
                 neighbor.lastArtifact = hashlib.md5(artifactString).hexdigest()
 
@@ -743,8 +787,8 @@ class MultiAgent(object):
             if self.useMonitor:
                 self.publishMonitors()
 
-            # Request any missing map diffs from each robot
-            self.requestMapDiffs()
+            # Request any missing data from each agent
+            self.requestMissing()
 
             # Execute the type-specific functions
             if not self.run():

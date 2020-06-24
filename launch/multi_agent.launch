@@ -23,6 +23,8 @@
   <arg name="deconflictRadius" default="2.5" />
   <!-- How long without a message to consider 'lost comms' -->
   <arg name="commThreshold" default="2" />
+  <!-- How long to wait before trying subsequent direct message requests -->
+  <arg name="dmWait" default="3" />
   <!-- How long to consider the robot as 'stuck'.  Use 3600 to disable for 1 hour -->
   <arg name="stopCheck" default="30" />
   <!-- How far to drive from the anchor before automatically dropping a beacon -->
@@ -54,9 +56,9 @@
   <arg name="pathTopic" default="ma_goal_path" />
   <arg name="goalsTopic" default="goal_array" />
   <arg name="mapDiffsTopic" default="map_diffs" />
-  <arg name="numDiffsTopic" default="num_diffs" />
   <arg name="nodeTopic" default="at_node_center" />
   <arg name="artifactsTopic" default="artifact_array/relay" />
+  <arg name="artifactImagesTopic" default="artifact_image_to_base" />
   <!-- Approximate location of anchor node, for first beacon drop distance calc -->
   <arg name="anchorX" default="0.0" />
   <arg name="anchorY" default="0.0" />
@@ -75,6 +77,7 @@
     <param name="solo" value="$(arg solo)" />
     <param name="deconflictRadius" value="$(arg deconflictRadius)" />
     <param name="commThreshold" value="$(arg commThreshold)" />
+    <param name="dmWait" value="$(arg dmWait)" />
     <param name="stopCheck" value="$(arg stopCheck)" />
     <param name="anchorDropDist" value="$(arg anchorDropDist)" />
     <param name="dropDist" value="$(arg dropDist)" />
@@ -94,9 +97,9 @@
     <param name="goalTopic" value="$(arg goalTopic)" />
     <param name="pathTopic" value="$(arg pathTopic)" />
     <param name="goalsTopic" value="$(arg goalsTopic)" />
-    <param name="numDiffsTopic" value="$(arg numDiffsTopic)" />
     <param name="nodeTopic" value="$(arg nodeTopic)" />
     <param name="artifactsTopic" value="$(arg artifactsTopic)" />
+    <param name="artifactImagesTopic" value="$(arg artifactImagesTopic)" />
     <param name="anchorX" value="$(arg anchorX)" />
     <param name="anchorY" value="$(arg anchorY)" />
     <param name="anchorZ" value="$(arg anchorZ)" />

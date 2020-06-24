@@ -11,6 +11,7 @@ from std_msgs.msg import String
 from nav_msgs.msg import Path
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
+from marble_artifact_detection_msgs.msg import ArtifactImg
 from marble_origin_detection_msgs.msg import OriginDetectionStatus
 
 from multi_agent import MultiAgent, ArtifactReport
@@ -353,30 +354,42 @@ class MARobot(MultiAgent):
                     self.mode = 'Deploy'
                     self.beaconCommLost = 0
 
-    def artifactCheck(self, agent, artifacts):
+    def artifactCheck(self, agent):
         # Check the artifact list received from the artifact manager for new artifacts
         for artifact in agent.newArtifacts.artifacts:
             artifact_id = (str(artifact.position.x) +
                            str(artifact.position.y) +
                            str(artifact.position.z))
-            if artifact_id not in artifacts:
-                artifacts[artifact_id] = ArtifactReport(artifact, artifact_id)
-                print(self.id, 'new artifact from', agent.id, artifact.obj_class, artifact_id)
+            if artifact_id not in self.artifacts:
+                # Check if there's a similar artifact already stored so we don't report
                 if agent.id == self.id:
                     ignore = False
-                    for neighbor in self.neighbors.values():
-                        for artifact2 in neighbor.artifacts.values():
-                            if getDist2D(artifact.position, artifact2.artifact.position) < 3:
-                                ignore = True
+                    for artifact2 in self.artifacts.values():
+                        if getDist2D(artifact.position, artifact2.artifact.position) < 3:
+                            ignore = True
 
                     if not ignore:
                         self.report = True
+
+                # Now add the artifact to the array
+                self.artifacts[artifact_id] = ArtifactReport(agent.id, artifact, artifact_id)
+                print(self.id, 'new artifact from', agent.id, artifact.obj_class, artifact_id)
+
+    def artifactCheckImages(self, agent):
+        image_id = agent.newArtifactImages.image_id
+        if image_id:
+            for artifact in self.artifacts.values():
+                if image_id == artifact.artifact.image_id:
+                    print(self.id, 'adding image', image_id, 'to', artifact.id)
+                    artifact.image = agent.newArtifactImages
+                    agent.newArtifactImages = ArtifactImg()
+                    break
 
     def artifactCheckReport(self):
         # If we didn't add anything new, check if any still need reported
         if not self.report:
             for artifact in self.artifacts.values():
-                if not artifact.reported:
+                if artifact.agent_id == self.id and not artifact.reported:
                     self.report = True
                     break
 
@@ -545,7 +558,7 @@ class MARobot(MultiAgent):
 
         # Get our neighbors' artifacts so we can deconflict reporting
         for neighbor in self.neighbors.values():
-            self.artifactCheck(neighbor, neighbor.artifacts)
+            self.artifactCheck(neighbor)
 
             # Count how many neighbors we have current goal information for deconfliction
             # Using 60 seconds for now
@@ -556,7 +569,8 @@ class MARobot(MultiAgent):
         self.num_pub.publish(num_neighbors)
 
         # Make sure our internal artifact list is up to date, and if we need to report
-        self.artifactCheck(self.agent, self.artifacts)
+        self.artifactCheck(self.agent)
+        self.artifactCheckImages(self.agent)
         self.artifactCheckReport()
 
         # Decide which goal to go to based on status in this precedence:

@@ -123,7 +123,7 @@ class MABase(MultiAgent):
             self.base.baseArtifacts.append(agent)
 
     def run(self):
-        self.baseArtifacts()
+        self.updateArtifacts()
         self.buildBaseArtifacts()
         self.publishNeighbors()
 

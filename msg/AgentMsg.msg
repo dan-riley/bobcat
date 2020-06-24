@@ -12,5 +12,6 @@ uint16 numDiffs
 BeaconArray commBeacons
 AgentArtifact[] baseArtifacts
 marble_artifact_detection_msgs/ArtifactArray newArtifacts
+uint16[] images
 std_msgs/Time lastMessage
 NeighborMsg[] neighbors

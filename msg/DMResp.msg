@@ -1,0 +1,3 @@
+string id
+marble_mapping/OctomapArray mapDiffs
+marble_artifact_detection_msgs/ArtifactImg[] images

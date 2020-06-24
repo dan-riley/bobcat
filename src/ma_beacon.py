@@ -37,7 +37,7 @@ class MABeacon(MultiAgent):
 
     def run(self):
         # Make sure our artifacts list is reconciled
-        self.baseArtifacts()
+        self.updateArtifacts()
 
         # If I'm a beacon, don't publish anything!  But keep listening for activate message.
         if not self.beacon.active:

@@ -8,4 +8,5 @@ nav_msgs/Odometry odometry
 Goal goal
 uint16 numDiffs
 marble_artifact_detection_msgs/ArtifactArray newArtifacts
+uint16[] images
 std_msgs/Time lastMessage
