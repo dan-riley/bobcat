@@ -4,5 +4,6 @@
     <arg name="vehicle" value="Base" />
     <arg name="type" value="base" />
     <arg name="monitor" value="true" />
+    <arg name="useMesh" value="false" />
   </include>
 </launch>

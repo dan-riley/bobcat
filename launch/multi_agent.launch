@@ -41,14 +41,16 @@
   <arg name="reverseDrop" default="false" />
   <!-- Topic to publish/subscribe data to neighbors -->
   <arg name="pubTopic" default="ma_data" />
-  <!-- Topic for point to point comms to build send/receive pairs -->
-  <arg name="directCommTopic" default="mesh_comm" />
+  <!-- Topic for comms -->
+  <arg name="commTopic" default="mesh_comm" />
+  <!-- Whether to use UDP_Mesh comms (True) or Multimaster/Sim comms (False) -->
+  <arg name="useMesh" default="false" />
   <!-- Topic the frontier exploration node listens to to calculate path home -->
   <arg name="homeTopic" default="report_artifact" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
   <arg name="stopTopic" default="nearness_controller/enable_control" />
   <arg name="waitTopic" default="origin_detection_status" />
-  <arg name="commTopic" default="base_comm" />
+  <arg name="baseCommTopic" default="base_comm" />
   <arg name="odomTopic" default="odometry" />
   <arg name="exploreGoalTopic" default="frontier_goal_pose" />
   <arg name="explorePathTopic" default="planned_path" />
@@ -86,11 +88,12 @@
     <param name="delayDrop" value="$(arg delayDrop)" />
     <param name="reverseDrop" value="$(arg reverseDrop)" />
     <param name="pubTopic" value="$(arg pubTopic)" />
-    <param name="directCommTopic" value="$(arg directCommTopic)" />
+    <param name="commTopic" value="$(arg commTopic)" />
+    <param name="useMesh" value="$(arg useMesh)" />
     <param name="homeTopic" value="$(arg homeTopic)" />
     <param name="stopTopic" value="$(arg stopTopic)" />
     <param name="waitTopic" value="$(arg waitTopic)" />
-    <param name="commTopic" value="$(arg commTopic)" />
+    <param name="baseCommTopic" value="$(arg baseCommTopic)" />
     <param name="odomTopic" value="$(arg odomTopic)" />
     <param name="exploreGoalTopic" value="$(arg exploreGoalTopic)" />
     <param name="explorePathTopic" value="$(arg explorePathTopic)" />

@@ -3,5 +3,6 @@
   <include file="$(find marble_multi_agent)/launch/multi_agent.launch">
     <arg name="vehicle" value="$(env ROS_HOSTNAME)" />
     <arg name="type" value="beacon" />
+    <arg name="useMesh" value="false" />
   </include>
 </launch>

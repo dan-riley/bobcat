@@ -237,7 +237,8 @@ class MultiAgent(object):
         self.numBeacons = len(myBeacons) if myBeacons[0] != '' else 0
         # Topics for publishers
         pubTopic = rospy.get_param('multi_agent/pubTopic', 'ma_data')
-        directCommTopic = rospy.get_param('multi_agent/directCommTopic', 'mesh_comm')
+        commTopic = rospy.get_param('multi_agent/commTopic', 'mesh_comm')
+        useMesh = rospy.get_param('multi_agent/useMesh', False)
         # Topics for subscribers
         topics = {}
         topics['odometry'] = rospy.get_param('multi_agent/odomTopic', 'odometry')
@@ -279,19 +280,29 @@ class MultiAgent(object):
         # Initialize base station
         self.base = Base()
 
+        if useMesh:
+            # UDP Mesh broadcast publishes to one topic but subscribes to different
+            broadcastPubTopic = commTopic + '/' + pubTopic
+            broadcastSubTopic = commTopic + '/' + self.id + '/' + pubTopic
+        else:
+            # Multimaster and sim use same topic for publishing and subscribing
+            broadcastPubTopic = commTopic + '/' + pubTopic
+            broadcastSubTopic = commTopic + '/' + pubTopic
+
+
         if self.type != 'base':
-            subTopic = '/Base/' + pubTopic
+            subTopic = '/Base/' + broadcastSubTopic
             self.data_sub['Base'] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
 
             # Pairs for direct message requests
-            pubDMTopic = '/' + self.id + '/' + directCommTopic + '/Base/dm_request'
-            subDMTopic = '/Base/' + directCommTopic + '/' + self.id + '/dm_request'
+            pubDMTopic = '/' + self.id + '/' + commTopic + '/Base/dm_request'
+            subDMTopic = '/Base/' + commTopic + '/' + self.id + '/dm_request'
             self.dmReq_pub['Base'] = rospy.Publisher(pubDMTopic, DMReqArray, queue_size=1)
             self.dmReq_sub['Base'] = rospy.Subscriber(subDMTopic, DMReqArray, self.DMRequestReceiever, 'Base')
 
             # Pairs for direct message responses
-            pubDMTopic = '/' + self.id + '/' + directCommTopic + '/Base/dm_response'
-            subDMTopic = '/Base/' + directCommTopic + '/' + self.id + '/dm_response'
+            pubDMTopic = '/' + self.id + '/' + commTopic + '/Base/dm_response'
+            subDMTopic = '/Base/' + commTopic + '/' + self.id + '/dm_response'
             self.dmResp_pub['Base'] = rospy.Publisher(pubDMTopic, DMRespArray, queue_size=1)
             self.dmResp_sub['Base'] = rospy.Subscriber(subDMTopic, DMRespArray, self.DMResponseReceiever, 'Base')
 
@@ -304,18 +315,18 @@ class MultiAgent(object):
             self.neighbors[nid] = Agent(nid, self.id, 'robot')
 
             # Subscribers for the packaged data
-            subTopic = '/' + nid + '/' + pubTopic
+            subTopic = '/' + nid + '/' + broadcastSubTopic
             self.data_sub[nid] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
 
             # Pairs for direct message requests
-            pubDMTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/dm_request'
-            subDMTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/dm_request'
+            pubDMTopic = '/' + self.id + '/' + commTopic + '/' + nid + '/dm_request'
+            subDMTopic = '/' + nid + '/' + commTopic + '/' + self.id + '/dm_request'
             self.dmReq_pub[nid] = rospy.Publisher(pubDMTopic, DMReqArray, queue_size=1)
             self.dmReq_sub[nid] = rospy.Subscriber(subDMTopic, DMReqArray, self.DMRequestReceiever, nid)
 
             # Pairs for direct message responses
-            pubDMTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/dm_response'
-            subDMTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/dm_response'
+            pubDMTopic = '/' + self.id + '/' + commTopic + '/' + nid + '/dm_response'
+            subDMTopic = '/' + nid + '/' + commTopic + '/' + self.id + '/dm_response'
             self.dmResp_pub[nid] = rospy.Publisher(pubDMTopic, DMRespArray, queue_size=1)
             self.dmResp_sub[nid] = rospy.Subscriber(subDMTopic, DMRespArray, self.DMResponseReceiever, nid)
 
@@ -355,18 +366,18 @@ class MultiAgent(object):
 
             if self.id != nid:
                 # Subscribers for the packaged data
-                subTopic = '/' + nid + '/' + pubTopic
+                subTopic = '/' + nid + '/' + broadcastSubTopic
                 self.data_sub[nid] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
 
                 # Pairs for direct message requests
-                pubDMTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/dm_request'
-                subDMTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/dm_request'
+                pubDMTopic = '/' + self.id + '/' + commTopic + '/' + nid + '/dm_request'
+                subDMTopic = '/' + nid + '/' + commTopic + '/' + self.id + '/dm_request'
                 self.dmReq_pub[nid] = rospy.Publisher(pubDMTopic, DMReqArray, queue_size=1)
                 self.dmReq_sub[nid] = rospy.Subscriber(subDMTopic, DMReqArray, self.DMRequestReceiever, nid)
 
                 # Pairs for direct message responses
-                pubDMTopic = '/' + self.id + '/' + directCommTopic + '/' + nid + '/dm_response'
-                subDMTopic = '/' + nid + '/' + directCommTopic + '/' + self.id + '/dm_response'
+                pubDMTopic = '/' + self.id + '/' + commTopic + '/' + nid + '/dm_response'
+                subDMTopic = '/' + nid + '/' + commTopic + '/' + self.id + '/dm_response'
                 self.dmResp_pub[nid] = rospy.Publisher(pubDMTopic, DMRespArray, queue_size=1)
                 self.dmResp_sub[nid] = rospy.Subscriber(subDMTopic, DMRespArray, self.DMResponseReceiever, nid)
 
@@ -378,7 +389,7 @@ class MultiAgent(object):
         self.neighbor_maps_pub = rospy.Publisher('neighbor_maps', OctomapNeighbors, latch=True, queue_size=1)
 
         # Publisher for the packaged data
-        self.data_pub = rospy.Publisher(pubTopic, AgentMsg, queue_size=1)
+        self.data_pub = rospy.Publisher(broadcastPubTopic, AgentMsg, queue_size=1)
 
     def publishMonitors(self):
         for neighbor in self.neighbors.values():

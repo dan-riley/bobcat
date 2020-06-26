@@ -98,7 +98,7 @@ class MARobot(MultiAgent):
         homeTopic = rospy.get_param('multi_agent/homeTopic', 'report_artifact')
         stopTopic = rospy.get_param('multi_agent/stopTopic', 'nearness_controller/enable_control')
         waitTopic = rospy.get_param('multi_agent/waitTopic', 'origin_detection_status')
-        commTopic = rospy.get_param('multi_agent/commTopic', 'base_comm')
+        baseCommTopic = rospy.get_param('multi_agent/baseCommTopic', 'base_comm')
         goalTopic = rospy.get_param('multi_agent/goalTopic', 'ma_goal')
         pathTopic = rospy.get_param('multi_agent/pathTopic', 'ma_goal_path')
 
@@ -127,7 +127,7 @@ class MARobot(MultiAgent):
         self.num_pub = rospy.Publisher('num_neighbors', Int8, queue_size=10)
         self.home_pub = rospy.Publisher(homeTopic, Bool, queue_size=10)
         self.stop_pub = rospy.Publisher(stopTopic, Bool, queue_size=10)
-        self.comm_pub = rospy.Publisher(commTopic, Bool, queue_size=10)
+        self.comm_pub = rospy.Publisher(baseCommTopic, Bool, queue_size=10)
         self.goal_pub = rospy.Publisher(goalTopic, PoseStamped, queue_size=10)
         self.path_pub = rospy.Publisher(pathTopic, Path, queue_size=10)
         self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
