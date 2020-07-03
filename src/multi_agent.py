@@ -817,11 +817,12 @@ class MultiAgent(object):
                 self.buildAgentMessage(msg, neighbor)
                 pubData.neighbors.append(msg)
 
-                # Only update the mapDiffs and publish if we have new diffs
+                # Get all of the map diffs to publish for the merger
+                neighbor_diffs.neighbors.append(neighbor.mapDiffs)
+                neighbor_diffs.num_neighbors += 1
+
+                # Only publish if we have new diffs
                 if neighbor.updateMapDiffs:
-                    # Get all of the map diffs to publish for the merger
-                    neighbor_diffs.neighbors.append(neighbor.mapDiffs)
-                    neighbor_diffs.num_neighbors += 1
                     neighbor.updateMapDiffs = False
                     pubMapDiffs = True
 
