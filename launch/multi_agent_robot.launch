@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
+  <arg name="vehicle" default="H01" />
+  <arg name="useMesh" default="false" />
   <include file="$(find marble_multi_agent)/launch/multi_agent.launch">
-    <arg name="vehicle" value="$(env ROS_HOSTNAME)" />
+    <arg name="vehicle" value="$(arg vehicle)" />
     <arg name="type" value="robot" />
-    <arg name="useMesh" value="false" />
+    <arg name="useMesh" value="$(arg useMesh)" />
   </include>
 </launch>
