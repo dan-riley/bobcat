@@ -574,11 +574,29 @@ class MARobot(MultiAgent):
         self.artifactCheckReport()
 
         # Decide which goal to go to based on status in this precedence:
+        # Report Artifacts
         # GUI Return Home
         # GUI Stop
         # GUI Goal Point
-        # Report Artifacts
         # Explore
+        if self.report:
+            # Once we see the base has our latest artifact report we can stop going home
+            if self.solo or self.base.lastArtifact == self.agent.lastArtifact:
+                # Turn off reporting
+                self.report = False
+                for artifact in self.artifacts.values():
+                    artifact.reported = True
+
+                # Resume normal operation (check mode or explore)
+                print(self.id, 'resuming operation...')
+            else:
+                if self.agent.status != 'Report':
+                    print(self.id, 'return to report...')
+                self.setGoalPoint('Report')
+                # Don't check for other mode when in report
+                return True
+
+        # Check for a mode from GUI or MA, or explore normally
         if self.mode == 'Home':
             self.setGoalPoint('Home')
         elif self.mode == 'Stop':
@@ -603,21 +621,6 @@ class MARobot(MultiAgent):
                 if self.agent.status != 'guiCommand':
                     print(self.id, 'setting GUI Goal Point...')
                 self.setGoalPoint('guiCommand')
-        elif self.report:
-            # Once we see the base has our latest artifact report we can stop going home
-            if self.solo or self.base.lastArtifact == self.agent.lastArtifact:
-                # Turn off reporting
-                self.report = False
-                for artifact in self.artifacts.values():
-                    artifact.reported = True
-
-                # Resume normal exploration
-                print(self.id, 'resuming exploration...')
-                self.deconflictExplore()
-            else:
-                if self.agent.status != 'Report':
-                    print(self.id, 'return to report...')
-                self.setGoalPoint('Report')
         else:
             # Normal exploration with coordination
             self.deconflictExplore()
