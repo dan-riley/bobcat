@@ -6,6 +6,7 @@ string guiTaskValue
 geometry_msgs/PoseStamped guiGoalPoint
 nav_msgs/Odometry odometry
 Goal goal
+AgentReset reset
 uint16 numDiffs
 marble_artifact_detection_msgs/ArtifactArray newArtifacts
 uint16[] images

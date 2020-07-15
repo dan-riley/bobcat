@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
+  <arg name="useMesh" default="false" />
   <include file="$(find marble_multi_agent)/launch/multi_agent.launch">
     <arg name="vehicle" value="Base" />
     <arg name="type" value="base" />
     <arg name="monitor" value="true" />
-    <arg name="useMesh" value="false" />
+    <arg name="useMesh" value="$(arg useMesh)" />
   </include>
 </launch>

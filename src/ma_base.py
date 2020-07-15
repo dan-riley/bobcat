@@ -7,6 +7,7 @@ from geometry_msgs.msg import Pose
 from visualization_msgs.msg import Marker
 from visualization_msgs.msg import MarkerArray
 from marble_multi_agent.msg import AgentArtifact
+from marble_multi_agent.msg import AgentReset
 
 from multi_agent import MultiAgent
 
@@ -29,6 +30,8 @@ class MABase(MultiAgent):
                 rospy.Subscriber(topic + 'guiTaskValue', String, self.GuiTaskValueReceiver, nid)
             self.monitor[nid]['guiGoalPoint'] = \
                 rospy.Subscriber(topic + 'guiGoalPoint', Pose, self.GuiGoalReceiver, nid)
+            self.monitor[nid]['guiReset'] = \
+                rospy.Subscriber(topic + 'guiReset', AgentReset, self.GuiResetReceiver, nid)
 
         self.monitor['beacons'] = rospy.Publisher('mbeacons', Marker, queue_size=10)
         self.mbeacon = Marker()
@@ -112,6 +115,10 @@ class MABase(MultiAgent):
             self.neighbors[nid].lastMessage = rospy.get_rostime()
             self.neighbors[nid].guiGoalPoint.header.frame_id = 'world'
             self.neighbors[nid].guiGoalPoint.pose = data
+
+    def GuiResetReceiver(self, data, nid):
+        if data.agent == nid:
+            self.resetDataCheck(data)
 
     def buildBaseArtifacts(self):
         # Set all of the current base station data

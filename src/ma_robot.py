@@ -514,7 +514,7 @@ class MARobot(MultiAgent):
             elif not self.agent.goal.path.poses:
                 # Report no path available
                 self.updateStatus('No Path')
-                print(self.id, 'no path!')
+                # print(self.id, 'no path!')
 
         # For future use, to handle tasks coming from the topic
         # Maybe this should just be separate topic

@@ -12,6 +12,7 @@ from geometry_msgs.msg import PoseStamped
 from marble_artifact_detection_msgs.msg import ArtifactArray
 from marble_artifact_detection_msgs.msg import ArtifactImg
 from marble_multi_agent.msg import AgentMsg
+from marble_multi_agent.msg import AgentReset
 from marble_multi_agent.msg import NeighborMsg
 from marble_multi_agent.msg import CommsCheckArray
 from marble_multi_agent.msg import Beacon
@@ -34,6 +35,20 @@ class Agent(object):
         self.pid = parent_id
         self.cid = ''
         self.type = agent_type
+        self.mapDiffs = OctomapArray()
+        self.mapDiffs.owner = self.id
+        self.updateMapDiffs = False
+        self.numDiffs = 0
+        self.missingDiffs = []
+        self.diffClear = False
+        self.lastMessage = rospy.get_rostime()
+        self.lastDirectMessage = self.lastMessage
+        self.incomm = True
+        self.simcomm = True
+        self.resetStamp = rospy.Time()
+        self.initialize()
+
+    def initialize(self, resetTime=None):
         self.status = ''
         self.guiTaskName = ''
         self.guiTaskValue = ''
@@ -43,47 +58,29 @@ class Agent(object):
         self.odometry = Odometry()
         self.exploreGoal = PoseStamped()
         self.explorePath = Path()
+        self.exploreGoal.header.frame_id = 'world'
+        self.explorePath.header.frame_id = 'world'
         self.goal = Goal()
         self.goals = GoalArray()
         self.atnode = Bool()
-        self.mapDiffs = OctomapArray()
-        self.mapDiffs.owner = self.id
-        self.updateMapDiffs = False
-        self.numDiffs = 0
-        self.missingDiffs = []
         self.commBeacons = BeaconArray()
         self.newArtifacts = ArtifactArray()
         self.newArtifactImages = ArtifactImg()
         self.images = []
         self.missingImages = []
-        self.lastMessage = rospy.get_rostime()
-        self.lastDirectMessage = self.lastMessage
         self.lastArtifact = ''
-        self.incomm = True
-        self.simcomm = True
-
-        self.exploreGoal.header.frame_id = 'world'
-        self.explorePath.header.frame_id = 'world'
-
-        """ Other properties that need to eventually be added for full functionality:
-        self.cid = id of the agent actually in direct comm with this neighbor, if it's indirect
-        self.type = robot, beacon, etc.
-        self.goalType = frontier, anchor, follow, wait, etc.
-        self.cost = cost to reach the goal
-        self.stateHistory = previous path of the agent for display purposes mostly
-        self.path = the intended path of the agent for display purposes mostly
-        self.replan = boolean flag for whether to force this agent to replan on it's next cycle
-        self.incomm = boolean flag whether the agent is currently in comm, useful only at anchor
-        """
+        self.reset = AgentReset()
+        self.resetTime = resetTime
 
     def updateCommon(self, neighbor):
         self.status = neighbor.status
         self.odometry = neighbor.odometry
         self.goal = neighbor.goal
         self.newArtifacts = neighbor.newArtifacts
+        self.reset = neighbor.reset
 
         # Update missing diffs if the neighbor said there are new ones
-        if neighbor.numDiffs > self.numDiffs:
+        if not self.diffClear and neighbor.numDiffs > self.numDiffs:
             for i in range(self.numDiffs, neighbor.numDiffs):
                 if i not in self.missingDiffs:
                     self.missingDiffs.append(i)
@@ -107,6 +104,14 @@ class Agent(object):
             self.guiGoalAccept = True
 
     def update(self, neighbor, offset, updater=False):
+        if self.resetTime:
+            # Wait 5 seconds before accepting any messages after a reset to hopefully clear cache
+            # TODO, still doesn't work!
+            if rospy.get_rostime() < self.resetTime + rospy.Duration(5):
+                return
+            else:
+                self.resetTime = None
+
         # Update parameters depending on if we're talking directly or not
         if updater:
             self.commBeacons = neighbor.commBeacons
@@ -417,6 +422,7 @@ class MultiAgent(object):
         msg.newArtifacts = agent.newArtifacts
         msg.lastMessage.data = agent.lastMessage
         msg.goal = agent.goal
+        msg.reset = agent.reset
 
         # Data that's only sent via direct comms
         if agent.id == self.id:
@@ -425,8 +431,6 @@ class MultiAgent(object):
             msg.baseArtifacts = self.base.baseArtifacts
             msg.commBeacons.data = self.beaconsArray
             msg.numDiffs = agent.mapDiffs.num_octomaps
-            # TODO this isn't going to work.  Need to figure it out.
-            # Think this is fine if we assume beacons always talk to base?
 
             # Build the images list from actually received images
             for artifact in self.artifacts.values():
@@ -544,6 +548,8 @@ class MultiAgent(object):
             data.guiTaskName = ''
             data.guiTaskValue = ''
             data.guiGoalPoint = PoseStamped()
+            if self.type == 'base':
+                data.reset = self.neighbors[data.id].reset
 
             # Load data from our neighbors, and their neighbors
             self.neighbors[data.id].update(data, offset, self.id)
@@ -589,6 +595,8 @@ class MultiAgent(object):
                             neighbor2.guiTaskName = ''
                             neighbor2.guiTaskValue = ''
                             neighbor2.guiGoalPoint = PoseStamped()
+                            neighbor2.reset = self.neighbors[neighbor2.id].reset
+
                         self.neighbors[neighbor2.id].update(neighbor2, offset)
 
                 elif neighbor2.lastMessage.data + offset + rospy.Duration(1) > self.base.lastMessage:
@@ -603,6 +611,74 @@ class MultiAgent(object):
                             self.agent.guiGoalPoint != neighbor2.guiGoalPoint):
                         self.agent.guiGoalPoint = neighbor2.guiGoalPoint
                         self.agent.guiGoalAccept = True
+                    # Only accept reset if it's newer than the last one for this agent
+                    if neighbor2.reset.stamp > self.agent.reset.stamp:
+                        self.agent.reset = neighbor2.reset
+
+    def resetDataCheck(self, data):
+        # ma_reset clears all data from the neighbor and artifacts, except map data
+        # Clear removes all existing diffs, but keeps sequence the same
+        # Reset removes all existing diffs, and resets the sequence to 0, fetching reported diffs
+        # Hard Reset restarts the map and ma data like fresh start, on all agents including target
+        # Sequences in seqs removes only that sequence and will keep skipping unless reset called
+        nid = data.agent
+        if nid and data.stamp > self.neighbors[nid].resetStamp:
+            print(self.id, 'resetting data for', nid)
+            self.neighbors[nid].resetStamp = data.stamp
+            self.neighbors[nid].diffClear = data.clear
+            # Reset and hard reset puts us back to 0 diffs
+            if data.reset or data.hardReset:
+                self.neighbors[nid].diffClear = True
+                self.neighbors[nid].numDiffs = 0
+
+            if data.ma_reset:
+                # Reset the agent's multiagent data
+                self.neighbors[nid].initialize(rospy.get_rostime())
+                # Remove this agent's artifacts from our list
+                for key in [key for key in self.artifacts if self.artifacts[key].agent_id == nid]:
+                    del self.artifacts[key]
+
+            if data.clear or data.reset or data.hardReset:
+                # Remove all of the diffs.  If just reset is passed, they'll be re-fetched
+                self.neighbors[nid].mapDiffs = OctomapArray()
+                self.neighbors[nid].mapDiffs.owner = nid
+                self.neighbors[nid].missingDiffs = []
+            else:
+                # If we got a sequence then remove just these from our local map
+                for seq in data.seqs:
+                    self.neighbors[nid].diffClear = True
+                    remove = None
+                    for idx, mapDiff in enumerate(self.neighbors[nid].mapDiffs.octomaps):
+                        if mapDiff.header.seq == seq:
+                            remove = idx
+                            break
+                    if remove != None:
+                        del self.neighbors[nid].mapDiffs.octomaps[remove]
+
+            # Save the data.  Have to do it here in case we did ma_reset
+            self.neighbors[nid].reset = data
+
+    def hardResetCheck(self):
+        # Reset self map and multiagent data (if passed)
+        reset = self.agent.reset
+        if reset.stamp > self.agent.resetStamp and reset.agent == self.id and reset.hardReset:
+            print(self.id, 'hard resetting!')
+            # If ma_reset true then re-initialize everything
+            if reset.ma_reset:
+                self.agent.initialize(rospy.get_rostime())
+                self.artifacts = {}
+                for neighbor in self.neighbors.values():
+                    neighbor.initialize(rospy.get_rostime())
+
+            self.agent.resetStamp = reset.stamp
+            # Clear out the maps
+            self.agent.mapDiffs = OctomapArray()
+            self.agent.mapDiffs.owner = self.id
+            self.agent.numDiffs = 0
+            self.agent.diffClear = True
+            return True
+
+        return False
 
     def addMapDiffs(self, nresp, agent):
         nresp.mapDiffs.owner = agent.id
@@ -807,12 +883,17 @@ class MultiAgent(object):
                 rate.sleep()
                 continue
 
+            # Check if we need to hard reset map and multiagent
+            hardReset = self.hardResetCheck()
+
             # Build the data message for self and neighbors
             pubData = AgentMsg()
             self.buildAgentMessage(pubData, self.agent)
             neighbor_diffs = OctomapNeighbors()
             pubMapDiffs = False
             for neighbor in self.neighbors.values():
+                # Check this neighbor to see if anything should be reset
+                self.resetDataCheck(neighbor.reset)
                 msg = NeighborMsg()
                 self.buildAgentMessage(msg, neighbor)
                 pubData.neighbors.append(msg)
@@ -821,14 +902,22 @@ class MultiAgent(object):
                 neighbor_diffs.neighbors.append(neighbor.mapDiffs)
                 neighbor_diffs.num_neighbors += 1
 
-                # Only publish if we have new diffs
-                if neighbor.updateMapDiffs:
+                # Only publish if we have new diffs or we've removed some
+                if neighbor.updateMapDiffs or neighbor.diffClear:
                     neighbor.updateMapDiffs = False
                     pubMapDiffs = True
 
+                    if neighbor.diffClear:
+                        neighbor_diffs.clear = True
+                        neighbor.diffClear = False
+
             pubData.header.stamp = rospy.get_rostime()
             self.data_pub.publish(pubData)
-            if pubMapDiffs:
+            if pubMapDiffs or hardReset:
+                if hardReset:
+                    # Only pass hardReset for resetting self map!
+                    neighbor_diffs.hardReset = True
+                    neighbor_diffs.clear = True
                 self.neighbor_maps_pub.publish(neighbor_diffs)
 
             rate.sleep()
