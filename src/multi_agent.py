@@ -80,7 +80,7 @@ class Agent(object):
         self.reset = neighbor.reset
 
         # Update missing diffs if the neighbor said there are new ones
-        if not self.diffClear and neighbor.numDiffs > self.numDiffs:
+        if not self.diffClear and neighbor.numDiffs > self.numDiffs and not self.reset.ignore:
             for i in range(self.numDiffs, neighbor.numDiffs):
                 if i not in self.missingDiffs:
                     self.missingDiffs.append(i)
@@ -619,10 +619,18 @@ class MultiAgent(object):
         # ma_reset clears all data from the neighbor and artifacts, except map data
         # Clear removes all existing diffs, but keeps sequence the same
         # Reset removes all existing diffs, and resets the sequence to 0, fetching reported diffs
+        # Ignore stops listening to this agent's map (does not clear!) until ignore set false
         # Hard Reset restarts the map and ma data like fresh start, on all agents including target
         # Sequences in seqs removes only that sequence and will keep skipping unless reset called
+
+        # Check if the flag for this type of agent is set
+        applyAgent = False
+        if ((self.type == 'base' and data.base) or
+            (self.type == 'robot' and data.robots) or self.type == 'beacon'):
+            applyAgent = True
+
         nid = data.agent
-        if nid and data.stamp > self.neighbors[nid].resetStamp:
+        if nid and applyAgent and data.stamp > self.neighbors[nid].resetStamp:
             print(self.id, 'resetting data for', nid)
             self.neighbors[nid].resetStamp = data.stamp
             self.neighbors[nid].diffClear = data.clear
@@ -667,6 +675,7 @@ class MultiAgent(object):
             if reset.ma_reset:
                 self.agent.initialize(rospy.get_rostime())
                 self.artifacts = {}
+                self.reset_pub.publish(True)
                 for neighbor in self.neighbors.values():
                     neighbor.initialize(rospy.get_rostime())
 
@@ -727,7 +736,8 @@ class MultiAgent(object):
                 neighbor.mapDiffs.num_octomaps += 1
                 neighbor.updateMapDiffs = True
                 # Remove the received diffs, in case we didn't get all of them
-                neighbor.missingDiffs.remove(octomap.header.seq)
+                if octomap.header.seq in neighbor.missingDiffs:
+                    neighbor.missingDiffs.remove(octomap.header.seq)
                 receivedDM = True
 
             # Add the new images to our artifacts

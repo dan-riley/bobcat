@@ -118,7 +118,11 @@ class MABase(MultiAgent):
 
     def GuiResetReceiver(self, data, nid):
         if data.agent == nid:
-            self.resetDataCheck(data)
+            # If the data is only going to the robot then we just add here and don't process
+            if not data.base and data.robots and data.stamp > self.neighbors[nid].resetStamp:
+                self.neighbors[nid].reset = data
+            else:
+                self.resetDataCheck(data)
 
     def buildBaseArtifacts(self):
         # Set all of the current base station data

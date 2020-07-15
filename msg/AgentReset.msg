@@ -3,5 +3,8 @@ string agent
 uint16[] seqs
 bool clear
 bool reset
+bool ignore
 bool hardReset
 bool ma_reset
+bool base
+bool robots

@@ -124,6 +124,7 @@ class MARobot(MultiAgent):
 
         self.task_pub = rospy.Publisher('task', String, queue_size=10)
         self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
+        self.reset_pub = rospy.Publisher('reset_artifacts', Bool, queue_size=10)
         self.num_pub = rospy.Publisher('num_neighbors', Int8, queue_size=10)
         self.home_pub = rospy.Publisher(homeTopic, Bool, queue_size=10)
         self.stop_pub = rospy.Publisher(stopTopic, Bool, queue_size=10)
