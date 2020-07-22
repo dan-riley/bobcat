@@ -3,7 +3,7 @@
   <arg name="vehicle" default="X1" />
   <arg name="type" default="robot" />
   <arg name="myBeacons" default="" />
-  <arg name="potentialNeighbors" default="X1,X2" />
+  <arg name="potentialNeighbors" default="" />
   <arg name="stopCheck" default="30" />
   <arg name="delayDrop" default="false" />
 

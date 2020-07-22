@@ -238,11 +238,11 @@ class MultiAgent(object):
         # Potential robot neighbors to monitor
         neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'H01,H02,H03').split(',')
         # Beacons this robot is carrying
-        myBeacons = rospy.get_param('multi_agent/myBeacons', '').split(',')
-        self.numBeacons = len(myBeacons) if myBeacons[0] != '' else 0
+        self.myBeacons = rospy.get_param('multi_agent/myBeacons', '').split(',')
+        self.numBeacons = len(self.myBeacons) if self.myBeacons[0] != '' else 0
         # Topics for publishers
         pubTopic = rospy.get_param('multi_agent/pubTopic', 'ma_data')
-        commTopic = rospy.get_param('multi_agent/commTopic', 'mesh_comm')
+        self.commTopic = rospy.get_param('multi_agent/commTopic', 'mesh_comm')
         useMesh = rospy.get_param('multi_agent/useMesh', False)
         # Topics for subscribers
         topics = {}
@@ -287,29 +287,15 @@ class MultiAgent(object):
 
         if useMesh:
             # UDP Mesh broadcast publishes to one topic but subscribes to different
-            broadcastPubTopic = commTopic + '/' + pubTopic
-            broadcastSubTopic = commTopic + '/' + self.id + '/' + pubTopic
+            self.broadcastPubTopic = self.commTopic + '/' + pubTopic
+            self.broadcastSubTopic = self.commTopic + '/' + self.id + '/' + pubTopic
         else:
             # Multimaster and sim use same topic for publishing and subscribing
-            broadcastPubTopic = commTopic + '/' + pubTopic
-            broadcastSubTopic = commTopic + '/' + pubTopic
-
+            self.broadcastPubTopic = self.commTopic + '/' + pubTopic
+            self.broadcastSubTopic = self.commTopic + '/' + pubTopic
 
         if self.type != 'base':
-            subTopic = '/Base/' + broadcastSubTopic
-            self.data_sub['Base'] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
-
-            # Pairs for direct message requests
-            pubDMTopic = '/' + self.id + '/' + commTopic + '/Base/dm_request'
-            subDMTopic = '/Base/' + commTopic + '/' + self.id + '/dm_request'
-            self.dmReq_pub['Base'] = rospy.Publisher(pubDMTopic, DMReqArray, queue_size=1)
-            self.dmReq_sub['Base'] = rospy.Subscriber(subDMTopic, DMReqArray, self.DMRequestReceiever, 'Base')
-
-            # Pairs for direct message responses
-            pubDMTopic = '/' + self.id + '/' + commTopic + '/Base/dm_response'
-            subDMTopic = '/Base/' + commTopic + '/' + self.id + '/dm_response'
-            self.dmResp_pub['Base'] = rospy.Publisher(pubDMTopic, DMRespArray, queue_size=1)
-            self.dmResp_sub['Base'] = rospy.Subscriber(subDMTopic, DMRespArray, self.DMResponseReceiever, 'Base')
+            self.setupComms('Base')
 
         if self.useSimComms:
             self.comm_sub[self.id] = \
@@ -317,84 +303,74 @@ class MultiAgent(object):
 
         # Setup the listeners for each neighbor
         for nid in [n for n in neighbors if n != self.id]:
-            self.neighbors[nid] = Agent(nid, self.id, 'robot')
-
-            # Subscribers for the packaged data
-            subTopic = '/' + nid + '/' + broadcastSubTopic
-            self.data_sub[nid] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
-
-            # Pairs for direct message requests
-            pubDMTopic = '/' + self.id + '/' + commTopic + '/' + nid + '/dm_request'
-            subDMTopic = '/' + nid + '/' + commTopic + '/' + self.id + '/dm_request'
-            self.dmReq_pub[nid] = rospy.Publisher(pubDMTopic, DMReqArray, queue_size=1)
-            self.dmReq_sub[nid] = rospy.Subscriber(subDMTopic, DMReqArray, self.DMRequestReceiever, nid)
-
-            # Pairs for direct message responses
-            pubDMTopic = '/' + self.id + '/' + commTopic + '/' + nid + '/dm_response'
-            subDMTopic = '/' + nid + '/' + commTopic + '/' + self.id + '/dm_response'
-            self.dmResp_pub[nid] = rospy.Publisher(pubDMTopic, DMRespArray, queue_size=1)
-            self.dmResp_sub[nid] = rospy.Subscriber(subDMTopic, DMRespArray, self.DMResponseReceiever, nid)
-
-            if self.useSimComms:
-                comm_topic = '/' + nid + '/commcheck'
-                self.comm_sub[nid] = \
-                    rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
-
-            # Setup topics for visualization at whichever monitors are specified (always base)
-            if self.useMonitor or self.type == 'base':
-                topic = 'neighbors/' + nid + '/'
-                self.monitor[nid] = {}
-                self.monitor[nid]['status'] = \
-                    rospy.Publisher(topic + 'status', String, queue_size=10)
-                self.monitor[nid]['incomm'] = \
-                    rospy.Publisher(topic + 'incomm', Bool, queue_size=10)
-                self.monitor[nid]['odometry'] = \
-                    rospy.Publisher(topic + 'odometry', Odometry, queue_size=10)
-                self.monitor[nid]['goal'] = \
-                    rospy.Publisher(topic + 'goal', PoseStamped, queue_size=10)
-                self.monitor[nid]['path'] = \
-                    rospy.Publisher(topic + 'path', Path, queue_size=10)
-                self.monitor[nid]['artifacts'] = \
-                    rospy.Publisher(topic + 'artifacts', ArtifactArray, queue_size=10)
-                self.monitor[nid]['image'] = \
-                    rospy.Publisher(topic + 'image', ArtifactImg, queue_size=10, latch=True)
+            if nid:
+                self.addNeighbor(nid, 'robot')
 
         # Setup the beacons.  For real robots the names shouldn't matter as long as consistent
         for i in range(1, totalBeacons + 1):
             prefix = '0' if i < 10 else ''
             nid = 'B' + prefix + str(i)
 
-            # Determine if this agent 'owns' the beacon so we don't have conflicting names
-            owner = True if nid in myBeacons else False
-
-            self.beacons[nid] = BeaconObj(nid, owner)
-
             if self.id != nid:
-                # Subscribers for the packaged data
-                subTopic = '/' + nid + '/' + broadcastSubTopic
-                self.data_sub[nid] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
-
-                # Pairs for direct message requests
-                pubDMTopic = '/' + self.id + '/' + commTopic + '/' + nid + '/dm_request'
-                subDMTopic = '/' + nid + '/' + commTopic + '/' + self.id + '/dm_request'
-                self.dmReq_pub[nid] = rospy.Publisher(pubDMTopic, DMReqArray, queue_size=1)
-                self.dmReq_sub[nid] = rospy.Subscriber(subDMTopic, DMReqArray, self.DMRequestReceiever, nid)
-
-                # Pairs for direct message responses
-                pubDMTopic = '/' + self.id + '/' + commTopic + '/' + nid + '/dm_response'
-                subDMTopic = '/' + nid + '/' + commTopic + '/' + self.id + '/dm_response'
-                self.dmResp_pub[nid] = rospy.Publisher(pubDMTopic, DMRespArray, queue_size=1)
-                self.dmResp_sub[nid] = rospy.Subscriber(subDMTopic, DMRespArray, self.DMResponseReceiever, nid)
-
-            if self.useSimComms:
-                comm_topic = '/' + nid + '/commcheck'
-                self.comm_sub[nid] = \
-                    rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
+                self.addNeighbor(nid, 'beacon')
+            else:
+                self.beacons[nid] = BeaconObj(nid, False)
 
         self.neighbor_maps_pub = rospy.Publisher('neighbor_maps', OctomapNeighbors, latch=True, queue_size=1)
 
         # Publisher for the packaged data
-        self.data_pub = rospy.Publisher(broadcastPubTopic, AgentMsg, queue_size=1)
+        self.data_pub = rospy.Publisher(self.broadcastPubTopic, AgentMsg, queue_size=1)
+
+    def addNeighbor(self, nid, agent_type):
+        if agent_type == 'robot':
+            self.neighbors[nid] = Agent(nid, self.id, agent_type)
+        else:
+            # Determine if this agent 'owns' the beacon so we don't have conflicting names
+            owner = True if nid in self.myBeacons else False
+            self.beacons[nid] = BeaconObj(nid, owner)
+
+        self.setupComms(nid)
+
+        if self.useSimComms:
+            comm_topic = '/' + nid + '/commcheck'
+            self.comm_sub[nid] = \
+                rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
+
+        # Setup topics for visualization at whichever monitors are specified (always base)
+        if agent_type == 'robot' and (self.useMonitor or self.type == 'base'):
+            topic = 'neighbors/' + nid + '/'
+            self.monitor[nid] = {}
+            self.monitor[nid]['status'] = \
+                rospy.Publisher(topic + 'status', String, queue_size=10)
+            self.monitor[nid]['incomm'] = \
+                rospy.Publisher(topic + 'incomm', Bool, queue_size=10)
+            self.monitor[nid]['odometry'] = \
+                rospy.Publisher(topic + 'odometry', Odometry, queue_size=10)
+            self.monitor[nid]['goal'] = \
+                rospy.Publisher(topic + 'goal', PoseStamped, queue_size=10)
+            self.monitor[nid]['path'] = \
+                rospy.Publisher(topic + 'path', Path, queue_size=10)
+            self.monitor[nid]['artifacts'] = \
+                rospy.Publisher(topic + 'artifacts', ArtifactArray, queue_size=10)
+            self.monitor[nid]['image'] = \
+                rospy.Publisher(topic + 'image', ArtifactImg, queue_size=10, latch=True)
+
+    def setupComms(self, nid):
+        # Subscribers for the packaged data
+        subTopic = '/' + nid + '/' + self.broadcastSubTopic
+        self.data_sub[nid] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
+
+        # Pairs for direct message requests
+        pubDMTopic = '/' + self.id + '/' + self.commTopic + '/' + nid + '/dm_request'
+        subDMTopic = '/' + nid + '/' + self.commTopic + '/' + self.id + '/dm_request'
+        self.dmReq_pub[nid] = rospy.Publisher(pubDMTopic, DMReqArray, queue_size=1)
+        self.dmReq_sub[nid] = rospy.Subscriber(subDMTopic, DMReqArray, self.DMRequestReceiever, nid)
+
+        # Pairs for direct message responses
+        pubDMTopic = '/' + self.id + '/' + self.commTopic + '/' + nid + '/dm_response'
+        subDMTopic = '/' + nid + '/' + self.commTopic + '/' + self.id + '/dm_response'
+        self.dmResp_pub[nid] = rospy.Publisher(pubDMTopic, DMRespArray, queue_size=1)
+        self.dmResp_sub[nid] = rospy.Subscriber(subDMTopic, DMRespArray, self.DMResponseReceiever, nid)
 
     def publishMonitors(self):
         for neighbor in self.neighbors.values():
@@ -564,18 +540,15 @@ class MultiAgent(object):
                         break
 
         if runComm:
-            # TODO Right now all maps are being sent, even if it's your own.  Can optimize.
-            # But, if we just merge before sending, we only need to send one map in the first place.
-            # So need to see if that's going to happen before optimizing this
-            # We could break the neighbors into multiple publishers so the other agents subscribe
-            # to everyone who are not themselves.  That would be more efficient than creating
-            # pairs of pubs/subs for each pair!
-
             # Get our neighbor's neighbors' data and update our own neighbor list
             for neighbor2 in data.neighbors:
                 # Make sure the neighbor isn't ourself, it's not a stale message,
                 # and we've already talked directly to the neighbor in the last N seconds
                 if neighbor2.id != self.id:
+                    # Dynamically add neighbors we don't know about
+                    if neighbor2.id not in self.neighbors:
+                        self.addNeighbor(neighbor2.id, 'robot')
+
                     # If the message is coming from the same place, take all messages so we don't
                     # miss a high bandwidth message.  Otherwise add an offset to prevent looping.
                     if data.id == neighbor2.cid:
@@ -720,6 +693,10 @@ class MultiAgent(object):
             nresp = DMResp()
             nresp.id = agent.id
 
+            # We might receive a request for an agent we didn't know about before so add neighbor
+            if agent.id != self.id and agent.id not in self.neighbors:
+                self.addNeighbor(agent.id, 'robot')
+
             self.addMapDiffs(nresp, agent)
             self.addImages(nresp, agent)
             resp.append(nresp)
@@ -746,7 +723,8 @@ class MultiAgent(object):
                     if artifact.artifact.image_id == image.image_id:
                         artifact.image = image
                         # Remove the received image, in case we didn't get all of them
-                        neighbor.missingImages.remove(image.image_id)
+                        if image.image_id in neighbor.missingImages:
+                            neighbor.missingImages.remove(image.image_id)
                         receivedDM = True
                         break
 

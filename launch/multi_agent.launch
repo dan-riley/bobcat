@@ -10,7 +10,7 @@
   <!-- Total number of beacons across all deployed agents.  Higher is ok. -->
   <arg name="totalBeacons" default="16" />
   <!-- List of all potentially deployed neighbors.  Determines what topics are subscribed. -->
-  <arg name="potentialNeighbors" default="H01,H02,H03,T01,T02,T03,L01,A01,A02,A03" />
+  <arg name="potentialNeighbors" default="" />
   <!-- Rate to run the node at -->
   <arg name="rate" default="1" />
   <!-- Whether to republish neighbor topics for visualization or other needs -->

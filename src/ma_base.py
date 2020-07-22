@@ -22,16 +22,10 @@ class MABase(MultiAgent):
         self.useMonitor = True
 
         for nid in self.neighbors:
-            topic = 'neighbors/' + nid + '/'
-            # Monitor GUI commands to send over the network
-            self.monitor[nid]['guiTaskName'] = \
-                rospy.Subscriber(topic + 'guiTaskName', String, self.GuiTaskNameReceiver, nid)
-            self.monitor[nid]['guiTaskValue'] = \
-                rospy.Subscriber(topic + 'guiTaskValue', String, self.GuiTaskValueReceiver, nid)
-            self.monitor[nid]['guiGoalPoint'] = \
-                rospy.Subscriber(topic + 'guiGoalPoint', Pose, self.GuiGoalReceiver, nid)
-            self.monitor[nid]['guiReset'] = \
-                rospy.Subscriber(topic + 'guiReset', AgentReset, self.GuiResetReceiver, nid)
+            self.addGUIMonitor(nid)
+
+        # Listen for new robots to be added to the system
+        self.monitor['addRobot'] = rospy.Subscriber('add_robot', String, self.AddRobotReceiver)
 
         self.monitor['beacons'] = rospy.Publisher('mbeacons', Marker, queue_size=10)
         self.mbeacon = Marker()
@@ -50,6 +44,18 @@ class MABase(MultiAgent):
         self.martifact = MarkerArray()
 
         self.commListen = True
+
+    def addGUIMonitor(self, nid):
+        topic = 'neighbors/' + nid + '/'
+        # Monitor GUI commands to send over the network
+        self.monitor[nid]['guiTaskName'] = \
+            rospy.Subscriber(topic + 'guiTaskName', String, self.GuiTaskNameReceiver, nid)
+        self.monitor[nid]['guiTaskValue'] = \
+            rospy.Subscriber(topic + 'guiTaskValue', String, self.GuiTaskValueReceiver, nid)
+        self.monitor[nid]['guiGoalPoint'] = \
+            rospy.Subscriber(topic + 'guiGoalPoint', Pose, self.GuiGoalReceiver, nid)
+        self.monitor[nid]['guiReset'] = \
+            rospy.Subscriber(topic + 'guiReset', AgentReset, self.GuiResetReceiver, nid)
 
     def buildArtifactMarkers(self):
         i = 0
@@ -98,6 +104,12 @@ class MABase(MultiAgent):
 
         self.buildArtifactMarkers()
         self.monitor['artifacts'].publish(self.martifact)
+
+    def AddRobotReceiver(self, data):
+        # Add a new robot to the system, which will propogate to any other agents in comms
+        if data.data not in self.neighbors:
+            self.addNeighbor(data.data, 'robot')
+            self.addGUIMonitor(data.data)
 
     def GuiTaskNameReceiver(self, data, nid):
         # Need to update the last message time to force neighbors to accept it
