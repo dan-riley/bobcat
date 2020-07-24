@@ -1,6 +1,7 @@
 string id
 string cid
 string status
+std_msgs/Time guiStamp
 string guiTaskName
 string guiTaskValue
 geometry_msgs/PoseStamped guiGoalPoint

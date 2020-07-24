@@ -190,9 +190,11 @@ class MARobot(MultiAgent):
 
     def getStatus(self):
         if self.newTask:
-            return self.agent.status + '+++' + self.newTask
+            status = self.agent.status + '+++' + self.newTask
         else:
-            return self.agent.status
+            status = self.agent.status
+
+        return status
 
     def deployBeacon(self, inplace, dropReason):
         deploy = False
@@ -563,6 +565,7 @@ class MARobot(MultiAgent):
 
             # Count how many neighbors we have current goal information for deconfliction
             # Using 60 seconds for now
+            # This is only accurate if times are relatively in sync (within 60-ish seconds)
             if neighbor.lastMessage > neighbor_check:
                 num_neighbors += 1
 

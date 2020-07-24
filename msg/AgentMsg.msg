@@ -3,6 +3,7 @@ string id
 string cid
 string type
 string status
+std_msgs/Time guiStamp
 string guiTaskName
 string guiTaskValue
 geometry_msgs/PoseStamped guiGoalPoint
@@ -11,6 +12,7 @@ Goal goal
 AgentReset reset
 uint16 numDiffs
 BeaconArray commBeacons
+std_msgs/Time baseStamp
 AgentArtifact[] baseArtifacts
 marble_artifact_detection_msgs/ArtifactArray newArtifacts
 uint16[] images

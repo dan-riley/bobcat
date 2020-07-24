@@ -112,32 +112,30 @@ class MABase(MultiAgent):
             self.addGUIMonitor(data.data)
 
     def GuiTaskNameReceiver(self, data, nid):
-        # Need to update the last message time to force neighbors to accept it
-        if data.data != self.neighbors[nid].guiTaskName:
-            self.neighbors[nid].lastMessage = rospy.get_rostime()
-            self.neighbors[nid].guiTaskName = data.data
+        self.neighbors[nid].guiStamp = rospy.get_rostime()
+        self.neighbors[nid].guiTaskName = data.data
 
     def GuiTaskValueReceiver(self, data, nid):
-        if data.data != self.neighbors[nid].guiTaskValue:
-            self.neighbors[nid].lastMessage = rospy.get_rostime()
-            self.neighbors[nid].guiTaskValue = data.data
+        self.neighbors[nid].guiStamp = rospy.get_rostime()
+        self.neighbors[nid].guiTaskValue = data.data
 
     def GuiGoalReceiver(self, data, nid):
-        if data != self.neighbors[nid].guiGoalPoint.pose:
-            self.neighbors[nid].lastMessage = rospy.get_rostime()
-            self.neighbors[nid].guiGoalPoint.header.frame_id = 'world'
-            self.neighbors[nid].guiGoalPoint.pose = data
+        self.neighbors[nid].guiStamp = rospy.get_rostime()
+        self.neighbors[nid].guiGoalPoint.header.frame_id = 'world'
+        self.neighbors[nid].guiGoalPoint.pose = data
 
     def GuiResetReceiver(self, data, nid):
         if data.agent == nid:
             # If the data is only going to the robot then we just add here and don't process
             if not data.base and data.robots and data.stamp > self.neighbors[nid].resetStamp:
+                self.neighbors[nid].guiStamp = rospy.get_rostime()
                 self.neighbors[nid].reset = data
             else:
                 self.resetDataCheck(data)
 
     def buildBaseArtifacts(self):
         # Set all of the current base station data
+        self.base.baseStamp = rospy.get_rostime()
         self.base.baseArtifacts = []
         for neighbor in self.neighbors.values():
             agent = AgentArtifact()
@@ -146,8 +144,8 @@ class MABase(MultiAgent):
             self.base.baseArtifacts.append(agent)
 
     def run(self):
-        self.updateArtifacts()
-        self.buildBaseArtifacts()
+        if self.updateArtifacts():
+            self.buildBaseArtifacts()
         self.publishNeighbors()
 
         return True

@@ -35,21 +35,17 @@ class Agent(object):
         self.pid = parent_id
         self.cid = ''
         self.type = agent_type
-        self.mapDiffs = OctomapArray()
-        self.mapDiffs.owner = self.id
-        self.updateMapDiffs = False
-        self.numDiffs = 0
-        self.missingDiffs = []
-        self.diffClear = False
+        self.reset = AgentReset()
         self.lastMessage = rospy.get_rostime()
         self.lastDirectMessage = self.lastMessage
         self.incomm = True
         self.simcomm = True
-        self.resetStamp = rospy.Time()
         self.initialize()
+        self.initializeMaps()
 
-    def initialize(self, resetTime=None):
+    def initialize(self, resetTime=rospy.Time()):
         self.status = ''
+        self.guiStamp = rospy.get_rostime()
         self.guiTaskName = ''
         self.guiTaskValue = ''
         self.guiGoalPoint = PoseStamped()
@@ -69,15 +65,25 @@ class Agent(object):
         self.images = []
         self.missingImages = []
         self.lastArtifact = ''
-        self.reset = AgentReset()
-        self.resetTime = resetTime
+        self.resetStamp = resetTime
+        if resetTime:
+            self.resetAgent = True
+        else:
+            self.resetAgent = False
+
+    def initializeMaps(self, numDiffs=0, diffClear=False):
+        self.mapDiffs = OctomapArray()
+        self.mapDiffs.owner = self.id
+        self.updateMapDiffs = False
+        self.numDiffs = numDiffs
+        self.missingDiffs = []
+        self.diffClear = diffClear
 
     def updateCommon(self, neighbor):
         self.status = neighbor.status
         self.odometry = neighbor.odometry
         self.goal = neighbor.goal
         self.newArtifacts = neighbor.newArtifacts
-        self.reset = neighbor.reset
 
         # Update missing diffs if the neighbor said there are new ones
         if not self.diffClear and neighbor.numDiffs > self.numDiffs and not self.reset.ignore:
@@ -93,6 +99,36 @@ class Agent(object):
                     self.missingImages.append(image)
             self.images = neighbor.images
 
+        # Ignore the GUI message if it's old
+        if neighbor.guiStamp.data > self.guiStamp:
+            self.guiUpdate(neighbor)
+
+    def update(self, neighbor, updater=False):
+        # If this agent has been reset, don't accept messages until confirmed it has reset
+        if self.resetAgent:
+            if neighbor.reset.stamp < self.resetStamp:
+                return
+            else:
+                self.resetAgent = False
+
+        # Update parameters depending on if we're talking directly or not
+        if updater:
+            self.commBeacons = neighbor.commBeacons
+            self.cid = updater
+            self.lastMessage = neighbor.header.stamp
+            self.lastDirectMessage = rospy.get_rostime()
+            self.incomm = True
+            self.updateCommon(neighbor)
+        else:
+            self.updateCommon(neighbor)
+            self.cid = neighbor.cid
+            self.incomm = False
+            self.lastMessage = neighbor.lastMessage.data
+
+    def guiUpdate(self, neighbor):
+        self.guiStamp = neighbor.guiStamp.data
+
+        # Flag any changed GUI tasks.  May consider always accepting but risk a loop
         if neighbor.guiTaskName and neighbor.guiTaskName != self.guiTaskName:
             self.guiTaskName = neighbor.guiTaskName
             self.guiAccept = True
@@ -103,36 +139,18 @@ class Agent(object):
             self.guiGoalPoint = neighbor.guiGoalPoint
             self.guiGoalAccept = True
 
-    def update(self, neighbor, offset, updater=False):
-        if self.resetTime:
-            # Wait 5 seconds before accepting any messages after a reset to hopefully clear cache
-            # TODO, still doesn't work!
-            if rospy.get_rostime() < self.resetTime + rospy.Duration(5):
-                return
-            else:
-                self.resetTime = None
-
-        # Update parameters depending on if we're talking directly or not
-        if updater:
-            self.commBeacons = neighbor.commBeacons
-            self.cid = updater
-            self.lastMessage = rospy.get_rostime()
-            self.lastDirectMessage = self.lastMessage
-            self.incomm = True
-            self.updateCommon(neighbor)
-        else:
-            self.updateCommon(neighbor)
-            self.cid = neighbor.cid
-            self.incomm = False
-            # Update the timestamp with the offset between machines
-            self.lastMessage = neighbor.lastMessage.data + offset
+        # Only accept reset if it's newer than the last one for this agent
+        if neighbor.reset.stamp > self.reset.stamp:
+            self.reset = neighbor.reset
 
 
 class Base(object):
     """ Data structure to hold pertinent information about the base station """
 
     def __init__(self):
+        self.baseStamp = rospy.get_rostime()
         self.lastMessage = rospy.get_rostime()
+        self.lastDirectMessage = self.lastMessage
         self.lastArtifact = ''
         self.incomm = True
         self.simcomm = True
@@ -140,9 +158,23 @@ class Base(object):
         self.commBeacons = BeaconArray()
 
     def update(self, neighbor):
-        self.lastMessage = rospy.get_rostime()
+        self.lastMessage = neighbor.header.stamp
+        self.lastDirectMessage = rospy.get_rostime()
         self.commBeacons = neighbor.commBeacons
+
+    def updateArtifacts(self, agent_id, neighbor):
+        self.baseStamp = neighbor.baseStamp.data
         self.baseArtifacts = neighbor.baseArtifacts
+        for agent in neighbor.baseArtifacts:
+            if agent.id == agent_id:
+                self.lastArtifact = agent.lastArtifact
+                break
+
+    def resetArtifact(self, agent_id):
+        for agent in self.baseArtifacts:
+            if agent.id == agent_id:
+                self.lastArtifact = ''
+                break
 
 
 class BeaconObj(object):
@@ -153,12 +185,14 @@ class BeaconObj(object):
         self.owner = owner
         self.pos = Point()
         self.lastMessage = rospy.get_rostime()
+        self.lastDirectMessage = self.lastMessage
         self.incomm = False
         self.simcomm = False
         self.active = False
 
     def update(self, neighbor):
-        self.lastMessage = rospy.get_rostime()
+        self.lastMessage = neighbor.header.stamp
+        self.lastDirectMessage = rospy.get_rostime()
 
 
 class ArtifactReport:
@@ -391,6 +425,7 @@ class MultiAgent(object):
     def buildAgentMessage(self, msg, agent):
         msg.id = agent.id
         msg.cid = agent.cid
+        msg.guiStamp.data = agent.guiStamp
         msg.guiTaskName = agent.guiTaskName
         msg.guiTaskValue = agent.guiTaskValue
         msg.guiGoalPoint = agent.guiGoalPoint
@@ -404,6 +439,7 @@ class MultiAgent(object):
         if agent.id == self.id:
             msg.status = self.getStatus()
             msg.type = self.type
+            msg.baseStamp.data = self.base.baseStamp
             msg.baseArtifacts = self.base.baseArtifacts
             msg.commBeacons.data = self.beaconsArray
             msg.numDiffs = agent.mapDiffs.num_octomaps
@@ -428,11 +464,11 @@ class MultiAgent(object):
 
         # Same for beacons
         for beacon in self.beacons.values():
-            beacon.incomm = beacon.lastMessage > checkTime
+            beacon.incomm = beacon.lastDirectMessage > checkTime
 
         # Same with base station
         if self.type != 'base' and not self.solo:
-            self.base.incomm = self.base.lastMessage > checkTime
+            self.base.incomm = self.base.lastDirectMessage > checkTime
 
     # Next 3 functions are just for simulated comms.  Otherwise simcomm is True.
     def simCommChecker(self, data, nid):
@@ -477,9 +513,6 @@ class MultiAgent(object):
         if not self.commListen:
             return
 
-        # Approximately account for different system times.  Assumes negligible transmit time.
-        offset = rospy.get_rostime() - data.header.stamp
-
         # If I'm a beacon, don't do anything with the data unless activated!
         if self.type == 'beacon':
             if not self.beaconCommCheck(data):
@@ -491,53 +524,23 @@ class MultiAgent(object):
         if data.type == 'beacon':
             if self.beacons[data.id].simcomm:
                 runComm = True
-                notStart = rospy.get_rostime() > rospy.Time(0)
                 # Need to figure out how to update commBeacons on self if received from a beacon!
                 # TODO if we assume all beacons are talking to base then this isn't needed?
                 self.beacons[data.id].update(data)
         elif data.type == 'base':
             if self.base.simcomm:
                 runComm = True
-                notStart = self.base.lastMessage > rospy.Time(0)
                 self.base.update(data)
-
-                # Update our own last artifact hash
-                for agent in data.baseArtifacts:
-                    if agent.id == self.id:
-                        self.base.lastArtifact = agent.lastArtifact
-                        break
+                self.base.updateArtifacts(self.id, data)
         elif self.neighbors[data.id].simcomm:
             runComm = True
-            notStart = self.neighbors[data.id].lastMessage > rospy.Time(0)
-
-            # Verify that the neighbor received this goal point then clear it out
-            if (data.guiTaskName and data.guiTaskValue and
-                    (self.neighbors[data.id].guiTaskName == data.guiTaskName and
-                     self.neighbors[data.id].guiTaskValue == data.guiTaskValue)):
-                self.neighbors[data.id].guiTaskName = ''
-                self.neighbors[data.id].guiTaskValue = ''
-            if (data.guiGoalPoint.header.frame_id and
-                    self.neighbors[data.id].guiGoalPoint == data.guiGoalPoint):
-                self.neighbors[data.id].guiGoalPoint = PoseStamped()
-
-            # Don't accept the GUI commands unless here or risk overwriting
-            data.guiTaskName = ''
-            data.guiTaskValue = ''
-            data.guiGoalPoint = PoseStamped()
-            if self.type == 'base':
-                data.reset = self.neighbors[data.id].reset
 
             # Load data from our neighbors, and their neighbors
-            self.neighbors[data.id].update(data, offset, self.id)
+            self.neighbors[data.id].update(data, self.id)
 
             # Update the base station artifacts list if it's newer from this neighbor
-            # TODO this isn't working
-            if data.lastMessage.data + offset + rospy.Duration(1) > self.base.lastMessage:
-                self.base.baseArtifacts = data.baseArtifacts
-                for agent in data.baseArtifacts:
-                    if agent.id == self.id:
-                        self.base.lastArtifact = agent.lastArtifact
-                        break
+            if data.baseStamp.data > self.base.baseStamp:
+                self.base.updateArtifacts(self.id, data)
 
         if runComm:
             # Get our neighbor's neighbors' data and update our own neighbor list
@@ -549,44 +552,21 @@ class MultiAgent(object):
                     if neighbor2.id not in self.neighbors:
                         self.addNeighbor(neighbor2.id, 'robot')
 
-                    # If the message is coming from the same place, take all messages so we don't
-                    # miss a high bandwidth message.  Otherwise add an offset to prevent looping.
-                    if data.id == neighbor2.cid:
-                        messOffset = rospy.Duration(0)
-                    else:
-                        messOffset = self.commThreshold
-
-                    newerMessage = (neighbor2.lastMessage.data + offset >
-                                    self.neighbors[neighbor2.id].lastMessage + messOffset)
+                    newerMessage = (neighbor2.lastMessage.data >
+                                    self.neighbors[neighbor2.id].lastMessage)
 
                     notDirectComm = self.neighbors[neighbor2.id].cid != self.id
                     incomm = self.neighbors[neighbor2.id].incomm
 
-                    if (notStart and (newerMessage and (notDirectComm or not incomm))):
-                        # Don't accept the GUI commands transmitted from the agents at the base
-                        if self.type == 'base':
-                            neighbor2.guiTaskName = ''
-                            neighbor2.guiTaskValue = ''
-                            neighbor2.guiGoalPoint = PoseStamped()
-                            neighbor2.reset = self.neighbors[neighbor2.id].reset
+                    if (newerMessage and (notDirectComm or not incomm)):
+                        self.neighbors[neighbor2.id].update(neighbor2)
+                    elif neighbor2.guiStamp.data > self.neighbors[neighbor2.id].guiStamp:
+                        # Accept the GUI commands coming from a neighbor if its new and not empty
+                        self.neighbors[neighbor2.id].guiUpdate(neighbor2)
 
-                        self.neighbors[neighbor2.id].update(neighbor2, offset)
-
-                elif neighbor2.lastMessage.data + offset + rospy.Duration(1) > self.base.lastMessage:
+                elif neighbor2.guiStamp.data > self.agent.guiStamp:
                     # Accept the GUI commands coming from a neighbor if its new and not empty
-                    if (neighbor2.guiTaskName and neighbor2.guiTaskValue and
-                            (self.agent.guiTaskName != neighbor2.guiTaskName or
-                             self.agent.guiTaskValue != neighbor2.guiTaskValue)):
-                        self.agent.guiTaskName = neighbor2.guiTaskName
-                        self.agent.guiTaskValue = neighbor2.guiTaskValue
-                        self.agent.guiAccept = True
-                    if (neighbor2.guiGoalPoint.header.frame_id and
-                            self.agent.guiGoalPoint != neighbor2.guiGoalPoint):
-                        self.agent.guiGoalPoint = neighbor2.guiGoalPoint
-                        self.agent.guiGoalAccept = True
-                    # Only accept reset if it's newer than the last one for this agent
-                    if neighbor2.reset.stamp > self.agent.reset.stamp:
-                        self.agent.reset = neighbor2.reset
+                    self.agent.guiUpdate(neighbor2)
 
     def resetDataCheck(self, data):
         # ma_reset clears all data from the neighbor and artifacts, except map data
@@ -607,23 +587,21 @@ class MultiAgent(object):
             print(self.id, 'resetting data for', nid)
             self.neighbors[nid].resetStamp = data.stamp
             self.neighbors[nid].diffClear = data.clear
-            # Reset and hard reset puts us back to 0 diffs
-            if data.reset or data.hardReset:
-                self.neighbors[nid].diffClear = True
-                self.neighbors[nid].numDiffs = 0
 
             if data.ma_reset:
                 # Reset the agent's multiagent data
-                self.neighbors[nid].initialize(rospy.get_rostime())
+                self.neighbors[nid].initialize(data.stamp)
+                self.base.resetArtifact(nid)
                 # Remove this agent's artifacts from our list
                 for key in [key for key in self.artifacts if self.artifacts[key].agent_id == nid]:
                     del self.artifacts[key]
 
             if data.clear or data.reset or data.hardReset:
-                # Remove all of the diffs.  If just reset is passed, they'll be re-fetched
-                self.neighbors[nid].mapDiffs = OctomapArray()
-                self.neighbors[nid].mapDiffs.owner = nid
-                self.neighbors[nid].missingDiffs = []
+                if data.clear:
+                    numDiffs = self.neighbors[nid].numDiffs
+                else:
+                    numDiffs = 0
+                self.neighbors[nid].initializeMaps(numDiffs, True)
             else:
                 # If we got a sequence then remove just these from our local map
                 for seq in data.seqs:
@@ -637,6 +615,7 @@ class MultiAgent(object):
                         del self.neighbors[nid].mapDiffs.octomaps[remove]
 
             # Save the data.  Have to do it here in case we did ma_reset
+            self.neighbors[nid].guiStamp = rospy.get_rostime()
             self.neighbors[nid].reset = data
 
     def hardResetCheck(self):
@@ -646,18 +625,20 @@ class MultiAgent(object):
             print(self.id, 'hard resetting!')
             # If ma_reset true then re-initialize everything
             if reset.ma_reset:
-                self.agent.initialize(rospy.get_rostime())
+                self.agent.initialize(reset.stamp)
+                self.base.resetArtifact(self.id)
                 self.artifacts = {}
                 self.reset_pub.publish(True)
                 for neighbor in self.neighbors.values():
-                    neighbor.initialize(rospy.get_rostime())
+                    neighbor.initialize()
+            else:
+                self.agent.resetStamp = reset.stamp
 
-            self.agent.resetStamp = reset.stamp
             # Clear out the maps
-            self.agent.mapDiffs = OctomapArray()
-            self.agent.mapDiffs.owner = self.id
-            self.agent.numDiffs = 0
-            self.agent.diffClear = True
+            self.agent.initializeMaps(0, True)
+            for neighbor in self.neighbors.values():
+                neighbor.initializeMaps(0, True)
+
             return True
 
         return False
@@ -820,6 +801,7 @@ class MultiAgent(object):
         self.beaconsArray = commBeacons
 
     def updateArtifacts(self):
+        updatedArtifacts = False
         for neighbor in self.neighbors.values():
             # Check the artifact list received from the artifact manager for new artifacts
             updateString = False
@@ -835,6 +817,12 @@ class MultiAgent(object):
             if updateString:
                 artifactString = repr(neighbor.newArtifacts.artifacts).encode('utf-8')
                 neighbor.lastArtifact = hashlib.md5(artifactString).hexdigest()
+                updatedArtifacts = True
+
+        if updatedArtifacts:
+            return True
+
+        return False
 
     def run(self):
         return False
