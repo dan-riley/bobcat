@@ -528,14 +528,14 @@ class MARobot(MultiAgent):
         # Manage the newest task sent
         if self.agent.guiAccept:
             if self.agent.guiTaskName == 'task':
-                if self.agent.guiTaskValue == 'Explore':
-                    # Overrides goal point to return to explore
-                    self.agent.guiGoalAccept = False
+                if self.agent.guiTaskValue == 'Explore' or self.agent.guiTaskValue == 'Start':
                     self.mode = 'Explore'
                 elif self.agent.guiTaskValue == 'Home':
                     self.mode = 'Home'
                 elif self.agent.guiTaskValue == 'Stop':
                     self.mode = 'Stop'
+                elif self.agent.guiTaskValue == 'Goal':
+                    self.mode = 'Goal'
                 elif self.agent.guiTaskValue == 'Deploy':
                     self.deployBeacon(True, 'GUI Command')
                     checkBeacon = False
@@ -614,11 +614,11 @@ class MARobot(MultiAgent):
                 if not self.newTask:
                     self.updateStatus('Regain comms deploy')
                 self.setGoalPoint('Home')
-        elif self.agent.guiGoalAccept:
+        elif self.mode == 'Goal':
             if (getDist(self.agent.odometry.pose.pose.position,
                         self.agent.guiGoalPoint.pose.position) < 1.0):
                 print(self.id, 'resuming exploration...')
-                self.agent.guiGoalAccept = False
+                self.mode = 'Explore'
                 # May want to add other options for tasks when it reaches the goal
                 self.deconflictExplore()
             else:

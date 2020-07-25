@@ -120,9 +120,14 @@ class MABase(MultiAgent):
         self.neighbors[nid].guiTaskValue = data.data
 
     def GuiGoalReceiver(self, data, nid):
-        self.neighbors[nid].guiStamp = rospy.get_rostime()
-        self.neighbors[nid].guiGoalPoint.header.frame_id = 'world'
-        self.neighbors[nid].guiGoalPoint.pose = data
+        # Don't accept a 0,0 goal due to GUI errors
+        if data.position.x or data.position.y:
+            self.neighbors[nid].guiStamp = rospy.get_rostime()
+            self.neighbors[nid].guiGoalPoint.header.frame_id = 'world'
+            self.neighbors[nid].guiGoalPoint.header.seq += 1
+            self.neighbors[nid].guiGoalPoint.pose = data
+            self.neighbors[nid].guiTaskName = 'task'
+            self.neighbors[nid].guiTaskValue = 'Goal'
 
     def GuiResetReceiver(self, data, nid):
         if data.agent == nid:

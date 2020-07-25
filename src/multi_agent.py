@@ -128,16 +128,14 @@ class Agent(object):
     def guiUpdate(self, neighbor):
         self.guiStamp = neighbor.guiStamp.data
 
-        # Flag any changed GUI tasks.  May consider always accepting but risk a loop
-        if neighbor.guiTaskName and neighbor.guiTaskName != self.guiTaskName:
+        if neighbor.guiTaskName and neighbor.guiTaskValue:
             self.guiTaskName = neighbor.guiTaskName
-            self.guiAccept = True
-        if neighbor.guiTaskValue and neighbor.guiTaskValue != self.guiTaskValue:
             self.guiTaskValue = neighbor.guiTaskValue
             self.guiAccept = True
-        if neighbor.guiGoalPoint.header.frame_id and neighbor.guiGoalPoint != self.guiGoalPoint:
+
+        # Accept goal point if it's updated
+        if neighbor.guiGoalPoint.header.seq > self.guiGoalPoint.header.seq:
             self.guiGoalPoint = neighbor.guiGoalPoint
-            self.guiGoalAccept = True
 
         # Only accept reset if it's newer than the last one for this agent
         if neighbor.reset.stamp > self.reset.stamp:
@@ -386,6 +384,10 @@ class MultiAgent(object):
                 rospy.Publisher(topic + 'path', Path, queue_size=10)
             self.monitor[nid]['artifacts'] = \
                 rospy.Publisher(topic + 'artifacts', ArtifactArray, queue_size=10)
+            self.monitor[nid]['guiTaskNameReceived'] = \
+                rospy.Publisher(topic + 'guiTaskNameReceived', String, queue_size=10)
+            self.monitor[nid]['guiTaskValueReceived'] = \
+                rospy.Publisher(topic + 'guiTaskValueReceived', String, queue_size=10)
             self.monitor[nid]['image'] = \
                 rospy.Publisher(topic + 'image', ArtifactImg, queue_size=10, latch=True)
 
@@ -414,6 +416,8 @@ class MultiAgent(object):
             self.monitor[neighbor.id]['goal'].publish(neighbor.goal.pose)
             self.monitor[neighbor.id]['path'].publish(neighbor.goal.path)
             self.monitor[neighbor.id]['artifacts'].publish(neighbor.newArtifacts)
+            self.monitor[neighbor.id]['guiTaskNameReceived'].publish(neighbor.guiTaskName)
+            self.monitor[neighbor.id]['guiTaskValueReceived'].publish(neighbor.guiTaskValue)
         for artifact in self.artifacts.values():
             if artifact.image.image_id and rospy.get_rostime() - artifact.lastPublished > rospy.Duration(60) and artifact.agent_id != self.id:
                 self.monitor[artifact.agent_id]['image'].publish(artifact.image)
@@ -847,9 +851,6 @@ class MultiAgent(object):
             # Reconcile beacon list with neighbors'
             self.updateBeacons()
 
-            if self.useMonitor:
-                self.publishMonitors()
-
             # Request any missing data from each agent
             self.requestMissing()
 
@@ -895,6 +896,9 @@ class MultiAgent(object):
                     neighbor_diffs.hardReset = True
                     neighbor_diffs.clear = True
                 self.neighbor_maps_pub.publish(neighbor_diffs)
+
+            if self.useMonitor:
+                self.publishMonitors()
 
             rate.sleep()
         return
