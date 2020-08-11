@@ -265,6 +265,8 @@ class MultiAgent(object):
         self.commThreshold = rospy.Duration(rospy.get_param('multi_agent/commThreshold', 2))
         # Time to wait before trying another agent for direct message requests
         self.dmWait = rospy.Duration(rospy.get_param('multi_agent/dmWait', 3))
+        # Whether to send DMs in one large message or split for comms
+        self.dmSplit = rospy.Duration(rospy.get_param('multi_agent/dmSplit', True))
         # Total number of potential beacons
         totalBeacons = rospy.get_param('multi_agent/totalBeacons', 16)
         # Potential robot neighbors to monitor
@@ -273,9 +275,10 @@ class MultiAgent(object):
         self.myBeacons = rospy.get_param('multi_agent/myBeacons', '').split(',')
         self.numBeacons = len(self.myBeacons) if self.myBeacons[0] != '' else 0
         # Topics for publishers
-        pubTopic = rospy.get_param('multi_agent/pubTopic', 'ma_data')
+        self.pubTopic = rospy.get_param('multi_agent/pubTopic', 'ma_data')
         self.commTopic = rospy.get_param('multi_agent/commTopic', 'mesh_comm')
         useMesh = rospy.get_param('multi_agent/useMesh', False)
+        self.useVirtual = rospy.get_param('multi_agent/useVirtual', False)
         # Topics for subscribers
         topics = {}
         topics['odometry'] = rospy.get_param('multi_agent/odomTopic', 'odometry')
@@ -319,12 +322,15 @@ class MultiAgent(object):
 
         if useMesh:
             # UDP Mesh broadcast publishes to one topic but subscribes to different
-            self.broadcastPubTopic = self.commTopic + '/' + pubTopic
-            self.broadcastSubTopic = self.commTopic + '/' + self.id + '/' + pubTopic
+            self.broadcastPubTopic = self.commTopic + '/' + self.pubTopic
+            self.broadcastSubTopic = self.commTopic + '/' + self.id + '/' + self.pubTopic
+        elif self.useVirtual:
+            # Virtual uses a send/recv prefix, and Sub is set in setupComms
+            self.broadcastPubTopic = self.commTopic + '/send/' + self.pubTopic
         else:
             # Multimaster and sim use same topic for publishing and subscribing
-            self.broadcastPubTopic = self.commTopic + '/' + pubTopic
-            self.broadcastSubTopic = self.commTopic + '/' + pubTopic
+            self.broadcastPubTopic = self.commTopic + '/' + self.pubTopic
+            self.broadcastSubTopic = self.commTopic + '/' + self.pubTopic
 
         if self.type != 'base':
             self.setupComms('Base')
@@ -361,7 +367,9 @@ class MultiAgent(object):
             owner = True if nid in self.myBeacons else False
             self.beacons[nid] = BeaconObj(nid, owner)
 
-        self.setupComms(nid)
+        # Beacons don't run a node in virtual, so don't setup comms
+        if agent_type != 'beacon' or (agent_type == 'beacon' and not self.useVirtual):
+            self.setupComms(nid)
 
         if self.useSimComms:
             comm_topic = '/' + nid + '/commcheck'
@@ -392,32 +400,43 @@ class MultiAgent(object):
                 rospy.Publisher(topic + 'image', ArtifactImg, queue_size=10, latch=True)
 
     def setupComms(self, nid):
+        if self.useVirtual:
+            subTopic = self.commTopic + '/recv/' + nid + '/' + self.pubTopic
+            pubDMReqTopic = self.commTopic + '/send/' + nid + '/dm_request'
+            subDMReqTopic = self.commTopic + '/recv/' + nid + '/dm_request'
+            pubDMRespTopic = self.commTopic + '/send/' + nid + '/dm_response'
+            subDMRespTopic = self.commTopic + '/recv/' + nid + '/dm_response'
+        else:
+            subTopic = '/' + nid + '/' + self.broadcastSubTopic
+            pubDMReqTopic = '/' + self.id + '/' + self.commTopic + '/' + nid + '/dm_request'
+            subDMReqTopic = '/' + nid + '/' + self.commTopic + '/' + self.id + '/dm_request'
+            pubDMRespTopic = '/' + self.id + '/' + self.commTopic + '/' + nid + '/dm_response'
+            subDMRespTopic = '/' + nid + '/' + self.commTopic + '/' + self.id + '/dm_response'
+
         # Subscribers for the packaged data
-        subTopic = '/' + nid + '/' + self.broadcastSubTopic
         self.data_sub[nid] = rospy.Subscriber(subTopic, AgentMsg, self.CommReceiver)
 
         # Pairs for direct message requests
-        pubDMTopic = '/' + self.id + '/' + self.commTopic + '/' + nid + '/dm_request'
-        subDMTopic = '/' + nid + '/' + self.commTopic + '/' + self.id + '/dm_request'
-        self.dmReq_pub[nid] = rospy.Publisher(pubDMTopic, DMReqArray, queue_size=1)
-        self.dmReq_sub[nid] = rospy.Subscriber(subDMTopic, DMReqArray, self.DMRequestReceiever, nid)
+        self.dmReq_pub[nid] = rospy.Publisher(pubDMReqTopic, DMReqArray, queue_size=1)
+        self.dmReq_sub[nid] = rospy.Subscriber(subDMReqTopic, DMReqArray, self.DMRequestReceiever, nid)
 
         # Pairs for direct message responses
-        pubDMTopic = '/' + self.id + '/' + self.commTopic + '/' + nid + '/dm_response'
-        subDMTopic = '/' + nid + '/' + self.commTopic + '/' + self.id + '/dm_response'
-        self.dmResp_pub[nid] = rospy.Publisher(pubDMTopic, DMRespArray, queue_size=1)
-        self.dmResp_sub[nid] = rospy.Subscriber(subDMTopic, DMRespArray, self.DMResponseReceiever, nid)
+        self.dmResp_pub[nid] = rospy.Publisher(pubDMRespTopic, DMRespArray, queue_size=1)
+        self.dmResp_sub[nid] = rospy.Subscriber(subDMRespTopic, DMRespArray, self.DMResponseReceiever, nid)
 
     def publishMonitors(self):
         for neighbor in self.neighbors.values():
             self.monitor[neighbor.id]['status'].publish(neighbor.status)
             self.monitor[neighbor.id]['incomm'].publish(neighbor.incomm)
-            self.monitor[neighbor.id]['odometry'].publish(neighbor.odometry)
-            self.monitor[neighbor.id]['goal'].publish(neighbor.goal.pose)
-            self.monitor[neighbor.id]['path'].publish(neighbor.goal.path)
-            self.monitor[neighbor.id]['artifacts'].publish(neighbor.newArtifacts)
             self.monitor[neighbor.id]['guiTaskNameReceived'].publish(neighbor.guiTaskName)
             self.monitor[neighbor.id]['guiTaskValueReceived'].publish(neighbor.guiTaskValue)
+            # Don't publish if the robot hasn't initialized odometry
+            if (neighbor.odometry.pose.pose.position.x != 0 and
+                neighbor.odometry.pose.pose.position.y != 0):
+                self.monitor[neighbor.id]['odometry'].publish(neighbor.odometry)
+                self.monitor[neighbor.id]['goal'].publish(neighbor.goal.pose)
+                self.monitor[neighbor.id]['path'].publish(neighbor.goal.path)
+                self.monitor[neighbor.id]['artifacts'].publish(neighbor.newArtifacts)
         for artifact in self.artifacts.values():
             if artifact.image.image_id and rospy.get_rostime() - artifact.lastPublished > rospy.Duration(60) and artifact.agent_id != self.id:
                 self.monitor[artifact.agent_id]['image'].publish(artifact.image)
@@ -647,7 +666,7 @@ class MultiAgent(object):
 
         return False
 
-    def addMapDiffs(self, nresp, agent):
+    def addMapDiffs(self, nid, nresp, agent):
         nresp.mapDiffs.owner = agent.id
         nresp.mapDiffs.num_octomaps = 0
 
@@ -662,14 +681,26 @@ class MultiAgent(object):
                 if mapDiff.header.seq == i:
                     nresp.mapDiffs.octomaps.append(mapDiff)
                     nresp.mapDiffs.num_octomaps += 1
+                    if self.dmSplit:
+                        # If splitting responses, publish then reset the response message
+                        self.dmResp_pub[nid].publish([nresp])
+                        nresp = DMResp()
+                        nresp.id = agent.id
+                        nresp.mapDiffs.owner = agent.id
+                        nresp.mapDiffs.num_octomaps = 0
                     break
 
-    def addImages(self, nresp, agent):
+    def addImages(self, nid, nresp, agent):
         # Add each requested image to the message
         for i in agent.missingImages:
             for artifact in self.artifacts.values():
                 if artifact.image.image_id == i:
                     nresp.images.append(artifact.image)
+                    if self.dmSplit:
+                        # If splitting responses, publish then reset the response message
+                        self.dmResp_pub[nid].publish([nresp])
+                        nresp = DMResp()
+                        nresp.id = agent.id
                     break
 
     def DMRequestReceiever(self, req, nid):
@@ -682,11 +713,13 @@ class MultiAgent(object):
             if agent.id != self.id and agent.id not in self.neighbors:
                 self.addNeighbor(agent.id, 'robot')
 
-            self.addMapDiffs(nresp, agent)
-            self.addImages(nresp, agent)
-            resp.append(nresp)
+            self.addMapDiffs(nid, nresp, agent)
+            self.addImages(nid, nresp, agent)
+            if not self.dmSplit:
+                resp.append(nresp)
 
-        self.dmResp_pub[nid].publish(resp)
+        if not self.dmSplit:
+            self.dmResp_pub[nid].publish(resp)
 
     def DMResponseReceiever(self, resp, nid):
         receivedDM = False

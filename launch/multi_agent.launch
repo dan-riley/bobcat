@@ -25,6 +25,8 @@
   <arg name="commThreshold" default="2" />
   <!-- How long to wait before trying subsequent direct message requests -->
   <arg name="dmWait" default="3" />
+  <!-- Whether to split DMs into single messages, or send as one large message -->
+  <arg name="dmSplit" default="true" />
   <!-- How long to consider the robot as 'stuck'.  Use 3600 to disable for 1 hour -->
   <arg name="stopCheck" default="30" />
   <!-- How far to drive from the anchor before automatically dropping a beacon -->
@@ -45,6 +47,8 @@
   <arg name="commTopic" default="mesh_comm" />
   <!-- Whether to use UDP_Mesh comms (True) or Multimaster/Sim comms (False) -->
   <arg name="useMesh" default="false" />
+  <!-- Whether to run in virtual mode.  If enabled, simcomms and useMesh should be false! -->
+  <arg name="useVirtual" default="false" />
   <!-- Topic the frontier exploration node listens to to calculate path home -->
   <arg name="homeTopic" default="report_artifact" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
@@ -90,6 +94,7 @@
     <param name="pubTopic" value="$(arg pubTopic)" />
     <param name="commTopic" value="$(arg commTopic)" />
     <param name="useMesh" value="$(arg useMesh)" />
+    <param name="useVirtual" value="$(arg useVirtual)" />
     <param name="homeTopic" value="$(arg homeTopic)" />
     <param name="stopTopic" value="$(arg stopTopic)" />
     <param name="waitTopic" value="$(arg waitTopic)" />

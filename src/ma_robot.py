@@ -5,6 +5,7 @@ import math
 import hashlib
 import rospy
 
+from std_msgs.msg import Empty
 from std_msgs.msg import Bool
 from std_msgs.msg import Int8
 from std_msgs.msg import String
@@ -124,6 +125,7 @@ class MARobot(MultiAgent):
 
         self.task_pub = rospy.Publisher('task', String, queue_size=10)
         self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
+        self.deploy_breadcrumb_pub = rospy.Publisher('breadcrumb/deploy', Empty, queue_size=10)
         self.reset_pub = rospy.Publisher('reset_artifacts', Bool, queue_size=10)
         self.num_pub = rospy.Publisher('num_neighbors', Int8, queue_size=10)
         self.home_pub = rospy.Publisher(homeTopic, Bool, queue_size=10)
@@ -242,6 +244,9 @@ class MARobot(MultiAgent):
 
             print(self.id, 'deploying beacon', deploy, 'for', dropReason)
             try:
+                # Deploy a virtual beacon whether using virtual, sim or live
+                self.deploy_breadcrumb_pub.publish(Empty())
+
                 if self.useSimComms:
                     # Drop the simulated beacon, and pause to simulate drop
                     if useIgnition:

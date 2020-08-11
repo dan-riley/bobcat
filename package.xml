@@ -5,7 +5,7 @@
   Multi-Agent code for MARBLE
   </description>
   <maintainer email="dan.riley@colorado.edu">Dan Riley</maintainer>
-  <license>GPL</license>
+  <license>MIT</license>
 
   <buildtool_depend>catkin</buildtool_depend>
 
