@@ -363,14 +363,15 @@ class MARobot(MultiAgent):
                     self.beaconCommLost = 0
 
     def artifactCheck(self, agent):
+        updateString = False
         # Check the artifact list received from the artifact manager for new artifacts
         for artifact in agent.newArtifacts.artifacts:
-            artifact_id = (str(artifact.position.x) +
-                           str(artifact.position.y) +
-                           str(artifact.position.z))
-            if artifact_id not in self.artifacts:
+            artifact_id = agent.id + '_' + str(artifact.artifact_id)
+            if artifact_id not in self.artifacts and artifact.position.x and artifact.position.y:
                 # Check if there's a similar artifact already stored so we don't report
                 if agent.id == self.id:
+                    # Mark that we need to update our hash
+                    updateString = True
                     ignore = False
                     for artifact2 in self.artifacts.values():
                         if getDist2D(artifact.position, artifact2.artifact.position) < 3:
@@ -381,17 +382,11 @@ class MARobot(MultiAgent):
 
                 # Now add the artifact to the array
                 self.artifacts[artifact_id] = ArtifactReport(agent.id, artifact, artifact_id)
+                agent.addArtifact(artifact)
                 print(self.id, 'new artifact from', agent.id, artifact.obj_class, artifact_id)
 
-    def artifactCheckImages(self, agent):
-        image_id = agent.newArtifactImages.image_id
-        if image_id:
-            for artifact in self.artifacts.values():
-                if image_id == artifact.artifact.image_id:
-                    print(self.id, 'adding image', image_id, 'to', artifact.id)
-                    artifact.image = agent.newArtifactImages
-                    agent.newArtifactImages = ArtifactImg()
-                    break
+        if updateString:
+            agent.updateHash()
 
     def artifactCheckReport(self):
         # If we didn't add anything new, check if any still need reported
@@ -404,8 +399,6 @@ class MARobot(MultiAgent):
         # Identify our report so we can track that the base station has seen it
         if self.report:
             print('will report...')
-            artifactString = repr(self.agent.newArtifacts.artifacts).encode('utf-8')
-            self.agent.lastArtifact = hashlib.md5(artifactString).hexdigest()
 
     def deconflictGoals(self):
         # Get all of the goals into a list
@@ -579,7 +572,6 @@ class MARobot(MultiAgent):
 
         # Make sure our internal artifact list is up to date, and if we need to report
         self.artifactCheck(self.agent)
-        self.artifactCheckImages(self.agent)
         self.artifactCheckReport()
 
         # Decide which goal to go to based on status in this precedence:

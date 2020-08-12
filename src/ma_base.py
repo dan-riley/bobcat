@@ -63,7 +63,6 @@ class MABase(MultiAgent):
         for artifact in self.artifacts.values():
 
             martifact = Marker()
-            martifact.header = artifact.artifact.header
             martifact.header.frame_id = 'world'
             martifact.id = i
             martifact.type = martifact.TEXT_VIEW_FACING
@@ -149,7 +148,8 @@ class MABase(MultiAgent):
             self.base.baseArtifacts.append(agent)
 
     def run(self):
-        if self.updateArtifacts():
+        self.updateArtifacts()
+        if self.artifactsUpdated:
             self.buildBaseArtifacts()
         self.publishNeighbors()
 

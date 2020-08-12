@@ -2,6 +2,7 @@
 from __future__ import print_function
 import hashlib
 import rospy
+import copy
 
 from std_msgs.msg import Bool
 from std_msgs.msg import String
@@ -30,12 +31,13 @@ from marble_mapping.msg import OctomapNeighbors
 class Agent(object):
     """ Data structure to hold pertinent information about other agents """
 
-    def __init__(self, agent_id, parent_id, agent_type):
+    def __init__(self, agent_id, parent_id, agent_type, report_images):
         self.id = agent_id
         self.pid = parent_id
         self.cid = ''
         self.type = agent_type
         self.reset = AgentReset()
+        self.reportImages = report_images
         self.lastMessage = rospy.get_rostime()
         self.lastDirectMessage = self.lastMessage
         self.incomm = True
@@ -61,7 +63,7 @@ class Agent(object):
         self.atnode = Bool()
         self.commBeacons = BeaconArray()
         self.newArtifacts = ArtifactArray()
-        self.newArtifactImages = ArtifactImg()
+        self.checkArtifacts = ArtifactArray()
         self.images = []
         self.missingImages = []
         self.lastArtifact = ''
@@ -141,6 +143,19 @@ class Agent(object):
         if neighbor.reset.stamp > self.reset.stamp:
             self.reset = neighbor.reset
 
+    def addArtifact(self, artifact):
+        self.checkArtifacts.artifacts.append(artifact)
+        self.checkArtifacts.owner = self.id
+        self.checkArtifacts.num_artifacts += 1
+
+    def updateHash(self):
+        # If set, ignore images when checking if Base has received new artifacts
+        if not self.reportImages:
+            for artifact in self.checkArtifacts.artifacts:
+                artifact.image_data.data = []
+        artifactString = repr(self.checkArtifacts.artifacts).encode('utf-8')
+        self.lastArtifact = hashlib.md5(artifactString).hexdigest()
+
 
 class Base(object):
     """ Data structure to hold pertinent information about the base station """
@@ -207,6 +222,8 @@ class ArtifactReport:
         self.new = True
         self.firstSeen = rospy.get_rostime()
         self.image = ArtifactImg()
+        self.image.artifact_id = artifact.artifact_id
+        self.image.artifact_img = artifact.image_data
         self.lastPublished = rospy.Time()
 
 
@@ -220,9 +237,6 @@ class DataListener:
             self.artifact_sub = \
                 rospy.Subscriber('/' + self.agent.id + '/' + topics['artifacts'],
                                  ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
-            self.artifact_images_sub = \
-                rospy.Subscriber('/' + self.agent.id + '/' + topics['artifactImages'],
-                                 ArtifactImg, self.Receiver, 'newArtifactImages', queue_size=1)
             self.odom_sub = \
                 rospy.Subscriber('/' + self.agent.id + '/' + topics['odometry'],
                                  Odometry, self.Receiver, 'odometry', queue_size=1)
@@ -261,6 +275,8 @@ class MultiAgent(object):
         self.useSimComms = rospy.get_param('multi_agent/simcomms', False)
         # Whether to run the agent without a base station (comms always true)
         self.solo = rospy.get_param('multi_agent/solo', False)
+        # Whether to ensure images are sent with artifacts to decide whether reporting is complete
+        self.reportImages = rospy.get_param('multi_agent/reportImages', True)
         # Time without message for lost comm
         self.commThreshold = rospy.Duration(rospy.get_param('multi_agent/commThreshold', 2))
         # Time to wait before trying another agent for direct message requests
@@ -305,6 +321,7 @@ class MultiAgent(object):
         self.monitor = {}
         self.wait = False  # Change to True to wait for Origin Detection
         self.commListen = False
+        self.artifactsUpdated = False
         self.lastDMReq = rospy.Time()
         self.dmReqs = []
 
@@ -314,7 +331,7 @@ class MultiAgent(object):
             self.start_time = rospy.get_rostime()
 
         # Initialize object for our own data
-        self.agent = Agent(self.id, self.id, self.type)
+        self.agent = Agent(self.id, self.id, self.type, self.reportImages)
         DataListener(self.agent, topics)
 
         # Initialize base station
@@ -361,7 +378,7 @@ class MultiAgent(object):
 
     def addNeighbor(self, nid, agent_type):
         if agent_type == 'robot':
-            self.neighbors[nid] = Agent(nid, self.id, agent_type)
+            self.neighbors[nid] = Agent(nid, self.id, agent_type, self.reportImages)
         else:
             # Determine if this agent 'owns' the beacon so we don't have conflicting names
             owner = True if nid in self.myBeacons else False
@@ -436,9 +453,9 @@ class MultiAgent(object):
                 self.monitor[neighbor.id]['odometry'].publish(neighbor.odometry)
                 self.monitor[neighbor.id]['goal'].publish(neighbor.goal.pose)
                 self.monitor[neighbor.id]['path'].publish(neighbor.goal.path)
-                self.monitor[neighbor.id]['artifacts'].publish(neighbor.newArtifacts)
+                self.monitor[neighbor.id]['artifacts'].publish(neighbor.checkArtifacts)
         for artifact in self.artifacts.values():
-            if artifact.image.image_id and rospy.get_rostime() - artifact.lastPublished > rospy.Duration(60) and artifact.agent_id != self.id:
+            if artifact.image.artifact_img.data and rospy.get_rostime() - artifact.lastPublished > rospy.Duration(60) and artifact.agent_id != self.id:
                 self.monitor[artifact.agent_id]['image'].publish(artifact.image)
                 artifact.lastPublished = rospy.get_rostime()
 
@@ -453,10 +470,14 @@ class MultiAgent(object):
         msg.guiTaskValue = agent.guiTaskValue
         msg.guiGoalPoint = agent.guiGoalPoint
         msg.odometry = agent.odometry
-        msg.newArtifacts = agent.newArtifacts
         msg.lastMessage.data = agent.lastMessage
         msg.goal = agent.goal
         msg.reset = agent.reset
+
+        # Need to clear any image data.  Will be overwritten by subscriber if done elswhere
+        msg.newArtifacts = copy.deepcopy(agent.checkArtifacts)
+        for artifact in msg.newArtifacts.artifacts:
+            artifact.image_data.data = []
 
         # Data that's only sent via direct comms
         if agent.id == self.id:
@@ -469,8 +490,8 @@ class MultiAgent(object):
 
             # Build the images list from actually received images
             for artifact in self.artifacts.values():
-                if artifact.image.image_id and artifact.agent_id == self.id:
-                    msg.images.append(artifact.image.image_id)
+                if artifact.image.artifact_img.data and artifact.agent_id == self.id:
+                    msg.images.append(artifact.image.artifact_id)
         else:
             msg.status = agent.status
             msg.numDiffs = agent.numDiffs
@@ -694,7 +715,9 @@ class MultiAgent(object):
         # Add each requested image to the message
         for i in agent.missingImages:
             for artifact in self.artifacts.values():
-                if artifact.image.image_id == i:
+                if (artifact.agent_id == agent.id and
+                        artifact.image.artifact_id == i and
+                        artifact.image.artifact_img.data):
                     nresp.images.append(artifact.image)
                     if self.dmSplit:
                         # If splitting responses, publish then reset the response message
@@ -738,11 +761,21 @@ class MultiAgent(object):
             # Add the new images to our artifacts
             for image in agent.images:
                 for artifact in self.artifacts.values():
-                    if artifact.artifact.image_id == image.image_id:
+                    if (artifact.agent_id == agent.id and
+                            artifact.artifact.artifact_id == image.artifact_id):
                         artifact.image = image
+                        # Add the image to the checkArtifact so we can update the hash table
+                        if self.reportImages:
+                            for checkArtifact in neighbor.checkArtifacts.artifacts:
+                                if checkArtifact.artifact_id == image.artifact_id:
+                                    checkArtifact.image_data = image.artifact_img
+                                    neighbor.updateHash()
+                                    self.artifactsUpdated = True
+                                    break
+
                         # Remove the received image, in case we didn't get all of them
-                        if image.image_id in neighbor.missingImages:
-                            neighbor.missingImages.remove(image.image_id)
+                        if image.artifact_id in neighbor.missingImages:
+                            neighbor.missingImages.remove(image.artifact_id)
                         receivedDM = True
                         break
 
@@ -843,23 +876,20 @@ class MultiAgent(object):
             # Check the artifact list received from the artifact manager for new artifacts
             updateString = False
             for artifact in neighbor.newArtifacts.artifacts:
-                artifact_id = (str(artifact.position.x) +
-                               str(artifact.position.y) +
-                               str(artifact.position.z))
+                artifact_id = neighbor.id + '_' + str(artifact.artifact_id)
                 if artifact_id not in self.artifacts:
                     updateString = True
                     self.artifacts[artifact_id] = ArtifactReport(neighbor.id, artifact, artifact_id)
+                    neighbor.addArtifact(artifact)
+
                     print(self.id, 'new artifact from', neighbor.id, artifact.obj_class, artifact_id)
 
             if updateString:
-                artifactString = repr(neighbor.newArtifacts.artifacts).encode('utf-8')
-                neighbor.lastArtifact = hashlib.md5(artifactString).hexdigest()
+                neighbor.updateHash()
                 updatedArtifacts = True
 
         if updatedArtifacts:
-            return True
-
-        return False
+            self.artifactsUpdated = True
 
     def run(self):
         return False
