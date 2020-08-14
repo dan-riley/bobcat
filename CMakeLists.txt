@@ -21,6 +21,7 @@ add_message_files(
   AgentArtifact.msg
   AgentMsg.msg
   AgentReset.msg
+  ArtifactScore.msg
   NeighborMsg.msg
   Goal.msg
   GoalArray.msg

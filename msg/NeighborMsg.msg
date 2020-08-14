@@ -10,5 +10,4 @@ Goal goal
 AgentReset reset
 uint16 numDiffs
 marble_artifact_detection_msgs/ArtifactArray newArtifacts
-uint16[] images
 std_msgs/Time lastMessage

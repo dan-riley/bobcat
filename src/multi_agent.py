@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 from __future__ import print_function
+import math
 import hashlib
 import rospy
 import copy
@@ -26,6 +27,14 @@ from marble_multi_agent.msg import DMResp
 from marble_multi_agent.msg import DMRespArray
 from marble_mapping.msg import OctomapArray
 from marble_mapping.msg import OctomapNeighbors
+
+
+def getDist(pos1, pos2):
+    return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2 + (pos1.z - pos2.z)**2)
+
+
+def getDist2D(pos1, pos2):
+    return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2)
 
 
 class Agent(object):
@@ -95,11 +104,14 @@ class Agent(object):
             self.numDiffs = neighbor.numDiffs
 
         # Identify new images available for request
-        if neighbor.images != self.images:
-            for image in neighbor.images:
-                if image not in self.images and image not in self.missingImages:
-                    self.missingImages.append(image)
-            self.images = neighbor.images
+        for artifact in neighbor.newArtifacts.artifacts:
+            if (artifact.image_data.format != 'empty' and
+                    artifact.artifact_id not in self.images and
+                    artifact.artifact_id not in self.missingImages):
+                # Images we know about so we don't re-mark them for download
+                self.images.append(artifact.artifact_id)
+                # Images we haven't received yet
+                self.missingImages.append(artifact.artifact_id)
 
         # Ignore the GUI message if it's old
         if neighbor.guiStamp.data > self.guiStamp:
@@ -214,17 +226,25 @@ class ArtifactReport:
     Holds full artifact message so neighbors can be fused.
     """
 
-    def __init__(self, agent_id, artifact, artifact_id):
-        self.id = artifact_id
+    def __init__(self, agent_id, artifact, sendImages):
+        self.id = artifact.artifact_id
         self.agent_id = agent_id
         self.artifact = artifact
         self.reported = False
+        self.score = 0
         self.new = True
         self.firstSeen = rospy.get_rostime()
-        self.image = ArtifactImg()
-        self.image.artifact_id = artifact.artifact_id
-        self.image.artifact_img = artifact.image_data
         self.lastPublished = rospy.Time()
+        self.originals = {}
+
+        # Mark empty data so we receiver doesn't try to request it
+        if not artifact.image_data.data or not sendImages:
+            artifact.image_data.format = 'empty'
+        # Save image so we can send it via DM
+        self.image = ArtifactImg()
+        if sendImages:
+            self.image.artifact_id = artifact.artifact_id
+            self.image.artifact_img = artifact.image_data
 
 
 class DataListener:
@@ -275,6 +295,8 @@ class MultiAgent(object):
         self.useSimComms = rospy.get_param('multi_agent/simcomms', False)
         # Whether to run the agent without a base station (comms always true)
         self.solo = rospy.get_param('multi_agent/solo', False)
+        # Whether to include images in reports at all (disable for low bandwidth!)
+        self.sendImages = rospy.get_param('multi_agent/sendImages', True)
         # Whether to ensure images are sent with artifacts to decide whether reporting is complete
         self.reportImages = rospy.get_param('multi_agent/reportImages', True)
         # Time without message for lost comm
@@ -305,6 +327,9 @@ class MultiAgent(object):
         topics['node'] = rospy.get_param('multi_agent/nodeTopic', 'at_node_center')
         topics['artifacts'] = rospy.get_param('multi_agent/artifactsTopic', 'artifact_array/relay')
         topics['artifactImages'] = rospy.get_param('multi_agent/artifactImagesTopic', 'artifact_image_to_base')
+
+        if not self.sendImages:
+            self.reportImages = False
 
         self.neighbors = {}
         self.beacons = {}
@@ -487,15 +512,9 @@ class MultiAgent(object):
             msg.baseArtifacts = self.base.baseArtifacts
             msg.commBeacons.data = self.beaconsArray
             msg.numDiffs = agent.mapDiffs.num_octomaps
-
-            # Build the images list from actually received images
-            for artifact in self.artifacts.values():
-                if artifact.image.artifact_img.data and artifact.agent_id == self.id:
-                    msg.images.append(artifact.image.artifact_id)
         else:
             msg.status = agent.status
             msg.numDiffs = agent.numDiffs
-            msg.images = agent.images
 
     def CommCheck(self):
         if rospy.get_rostime() < self.start_time + self.commThreshold:
@@ -715,9 +734,7 @@ class MultiAgent(object):
         # Add each requested image to the message
         for i in agent.missingImages:
             for artifact in self.artifacts.values():
-                if (artifact.agent_id == agent.id and
-                        artifact.image.artifact_id == i and
-                        artifact.image.artifact_img.data):
+                if artifact.image.artifact_id == i and artifact.image.artifact_img.data:
                     nresp.images.append(artifact.image)
                     if self.dmSplit:
                         # If splitting responses, publish then reset the response message
@@ -727,6 +744,8 @@ class MultiAgent(object):
                     break
 
     def DMRequestReceiever(self, req, nid):
+        # TODO add a time check so we don't try to send again if we already sent recently,
+        # as the comms client may be trying to take care of the resend
         resp = []
         for agent in req.agents:
             nresp = DMResp()
@@ -761,8 +780,7 @@ class MultiAgent(object):
             # Add the new images to our artifacts
             for image in agent.images:
                 for artifact in self.artifacts.values():
-                    if (artifact.agent_id == agent.id and
-                            artifact.artifact.artifact_id == image.artifact_id):
+                    if artifact.artifact.artifact_id == image.artifact_id:
                         artifact.image = image
                         # Add the image to the checkArtifact so we can update the hash table
                         if self.reportImages:
@@ -870,23 +888,45 @@ class MultiAgent(object):
 
         self.beaconsArray = commBeacons
 
+    def artifactCheck(self, agent):
+        updateString = False
+        # Check the artifact list received from the artifact manager for new artifacts
+        for artifact in agent.newArtifacts.artifacts:
+            aid = artifact.artifact_id
+            if aid not in self.artifacts and artifact.position.x and artifact.position.y:
+                # Check if there's a similar artifact already stored so we don't report
+                if agent.id == self.id:
+                    # Mark that we need to update our hash
+                    updateString = True
+                    ignore = False
+                    for artifact2 in self.artifacts.values():
+                        if getDist2D(artifact.position, artifact2.artifact.position) < 3:
+                            ignore = True
+
+                    if not ignore:
+                        self.report = True
+
+                # Now add the artifact to the array
+                self.artifacts[aid] = ArtifactReport(agent.id, artifact, self.sendImages)
+                agent.addArtifact(artifact)
+
+                # At the base station, fuse the artifacts and make sure we mark an update
+                if self.type == 'base':
+                    updateString = True
+                    self.fuseArtifact(self.artifacts[aid])
+
+                print(self.id, 'new artifact from', agent.id, artifact.obj_class, aid)
+
+        if updateString:
+            agent.updateHash()
+            return True
+
+        return False
+
     def updateArtifacts(self):
         updatedArtifacts = False
         for neighbor in self.neighbors.values():
-            # Check the artifact list received from the artifact manager for new artifacts
-            updateString = False
-            for artifact in neighbor.newArtifacts.artifacts:
-                artifact_id = neighbor.id + '_' + str(artifact.artifact_id)
-                if artifact_id not in self.artifacts:
-                    updateString = True
-                    self.artifacts[artifact_id] = ArtifactReport(neighbor.id, artifact, artifact_id)
-                    neighbor.addArtifact(artifact)
-
-                    print(self.id, 'new artifact from', neighbor.id, artifact.obj_class, artifact_id)
-
-            if updateString:
-                neighbor.updateHash()
-                updatedArtifacts = True
+            updatedArtifacts = self.artifactCheck(neighbor)
 
         if updatedArtifacts:
             self.artifactsUpdated = True

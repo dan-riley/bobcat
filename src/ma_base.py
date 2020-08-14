@@ -1,15 +1,18 @@
 #!/usr/bin/env python
 from __future__ import print_function
 import rospy
+import copy
 
 from std_msgs.msg import String
 from geometry_msgs.msg import Pose
 from visualization_msgs.msg import Marker
 from visualization_msgs.msg import MarkerArray
+from marble_artifact_detection_msgs.msg import Artifact
 from marble_multi_agent.msg import AgentArtifact
 from marble_multi_agent.msg import AgentReset
+from marble_multi_agent.msg import ArtifactScore
 
-from multi_agent import MultiAgent
+from multi_agent import MultiAgent, getDist2D
 
 
 class MABase(MultiAgent):
@@ -20,6 +23,12 @@ class MABase(MultiAgent):
         MultiAgent.__init__(self)
         # Force the monitors on for Base type
         self.useMonitor = True
+        # Distance to fuse artifacts within.  May want smaller to account for missed score reports.
+        self.fuseDist = rospy.get_param('multi_agent/fuseDist', 3.0)
+        # Storage for fused artifacts and reporting
+        self.fusedArtifacts = {}
+        self.fused_pub = rospy.Publisher('artifact_report', Artifact, queue_size=10)
+        self.score_sub = rospy.Subscriber('artifact_score', ArtifactScore, self.GetArtifactScore)
 
         for nid in self.neighbors:
             self.addGUIMonitor(nid)
@@ -104,6 +113,10 @@ class MABase(MultiAgent):
         self.buildArtifactMarkers()
         self.monitor['artifacts'].publish(self.martifact)
 
+    def GetArtifactScore(self, data):
+        self.fusedArtifacts[data.id].score = data.score
+        self.fusedArtifacts[data.id].reported = True
+
     def AddRobotReceiver(self, data):
         # Add a new robot to the system, which will propogate to any other agents in comms
         if data.data not in self.neighbors:
@@ -147,10 +160,67 @@ class MABase(MultiAgent):
             agent.lastArtifact = neighbor.lastArtifact
             self.base.baseArtifacts.append(agent)
 
+    def fuseArtifact(self, artifact):
+        fuse = False
+        rem = []
+        for fartifact in self.fusedArtifacts.values():
+            if (artifact.artifact.obj_class == fartifact.artifact.obj_class and
+                    getDist2D(artifact.artifact.position, fartifact.artifact.position) < self.fuseDist):
+                fuse = True
+                if artifact.id not in fartifact.originals:
+                    fartifact.originals[artifact.id] = artifact
+
+                # Get the averages for position and probability
+                x = 0
+                y = 0
+                z = 0
+                obj_prob = 0
+                for artifact in fartifact.originals.values():
+                    x += artifact.artifact.position.x
+                    y += artifact.artifact.position.y
+                    z += artifact.artifact.position.z
+                    obj_prob += artifact.artifact.obj_prob
+
+                length = len(fartifact.originals)
+                new_fartifact = copy.deepcopy(fartifact)
+                new_fartifact.artifact.position.x = x / length
+                new_fartifact.artifact.position.y = y / length
+                new_fartifact.artifact.position.z = z / length
+                new_fartifact.artifact.obj_prob = obj_prob / length
+
+                # Update the id
+                new_fartifact.id += '_' + artifact.id
+                new_fartifact.artifact.artifact_id = new_fartifact.id
+                # For now don't reset report flag.  If it was reported don't waste an attempt,
+                # particularly if fuseDist is small!  If ack's become more reliable maybe change
+                # If we didn't score with this artifact already, then make sure we try to report
+                # if not new_fartifact.score:
+                #     new_fartifact.reported = False
+
+                # Save the artifact
+                self.fusedArtifacts[new_fartifact.id] = new_fartifact
+                # Identify old fused artifacts to remove
+                rem.append(fartifact.id)
+
+        # Remove old fused artifacts that aren't needed anymore
+        for rid in rem:
+            del self.fusedArtifacts[rid]
+
+        # This artifact hasn't been fused yet, so add it
+        if not fuse:
+            self.fusedArtifacts[artifact.id] = copy.deepcopy(artifact)
+            self.fusedArtifacts[artifact.id].originals[artifact.id] = artifact
+
+    def reportArtifacts(self):
+        for artifact in self.fusedArtifacts.values():
+            if not artifact.reported:
+                self.fused_pub.publish(artifact.artifact)
+
     def run(self):
         self.updateArtifacts()
         if self.artifactsUpdated:
             self.buildBaseArtifacts()
+        self.reportArtifacts()
         self.publishNeighbors()
 
         return True

@@ -19,9 +19,13 @@
   <arg name="simcomms" default="false" />
   <!-- Whether to run the agent solo (simulates always in comm with base) -->
   <arg name="solo" default="false" />
+  <!-- Whether to transmit images. Disable for low bandwidth situations.  May be different on each. -->
+  <arg name="sendImages" default="true" />
   <!-- True ensures images are received by Base Station before exiting report -->
   <!-- Set to false if comms may be an issue.  CAUTION: This must be the same on all agents! -->
   <arg name="reportImages" default="true" />
+  <!-- Distance within which to fuse artifacts -->
+  <arg name="fuseDist" default="3.0" />
   <!-- Distance between goal points for deconfliction -->
   <arg name="deconflictRadius" default="2.5" />
   <!-- How long without a message to consider 'lost comms' -->
@@ -84,7 +88,9 @@
     <param name="monitor" value="$(arg monitor)" />
     <param name="simcomms" value="$(arg simcomms)" />
     <param name="solo" value="$(arg solo)" />
+    <param name="sendImages" value="$(arg sendImages)" />
     <param name="reportImages" value="$(arg reportImages)" />
+    <param name="fuseDist" value="$(arg fuseDist)" />
     <param name="deconflictRadius" value="$(arg deconflictRadius)" />
     <param name="commThreshold" value="$(arg commThreshold)" />
     <param name="dmWait" value="$(arg dmWait)" />

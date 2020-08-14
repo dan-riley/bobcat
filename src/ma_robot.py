@@ -2,7 +2,6 @@
 from __future__ import print_function
 from cmath import rect, phase
 import math
-import hashlib
 import rospy
 
 from std_msgs.msg import Empty
@@ -15,7 +14,7 @@ from geometry_msgs.msg import PoseStamped
 from marble_artifact_detection_msgs.msg import ArtifactImg
 from marble_origin_detection_msgs.msg import OriginDetectionStatus
 
-from multi_agent import MultiAgent, ArtifactReport
+from multi_agent import MultiAgent, ArtifactReport, getDist, getDist2D
 
 # Import Ignition/Gazebo only if running in the sim so the robot doesn't need them
 if rospy.get_param('multi_agent/simcomms', False):
@@ -27,14 +26,6 @@ if rospy.get_param('multi_agent/simcomms', False):
         from subt_msgs.srv import SetPose
     else:
         from gazebo_msgs.srv import SetModelState
-
-
-def getDist(pos1, pos2):
-    return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2 + (pos1.z - pos2.z)**2)
-
-
-def getDist2D(pos1, pos2):
-    return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2)
 
 
 def getYaw(orientation):
@@ -361,32 +352,6 @@ class MARobot(MultiAgent):
                 if self.beaconCommLost > 5:
                     self.mode = 'Deploy'
                     self.beaconCommLost = 0
-
-    def artifactCheck(self, agent):
-        updateString = False
-        # Check the artifact list received from the artifact manager for new artifacts
-        for artifact in agent.newArtifacts.artifacts:
-            artifact_id = agent.id + '_' + str(artifact.artifact_id)
-            if artifact_id not in self.artifacts and artifact.position.x and artifact.position.y:
-                # Check if there's a similar artifact already stored so we don't report
-                if agent.id == self.id:
-                    # Mark that we need to update our hash
-                    updateString = True
-                    ignore = False
-                    for artifact2 in self.artifacts.values():
-                        if getDist2D(artifact.position, artifact2.artifact.position) < 3:
-                            ignore = True
-
-                    if not ignore:
-                        self.report = True
-
-                # Now add the artifact to the array
-                self.artifacts[artifact_id] = ArtifactReport(agent.id, artifact, artifact_id)
-                agent.addArtifact(artifact)
-                print(self.id, 'new artifact from', agent.id, artifact.obj_class, artifact_id)
-
-        if updateString:
-            agent.updateHash()
 
     def artifactCheckReport(self):
         # If we didn't add anything new, check if any still need reported
