@@ -160,6 +160,8 @@ class MABase(MultiAgent):
             agent.lastArtifact = neighbor.lastArtifact
             self.base.baseArtifacts.append(agent)
 
+        self.artifactsUpdated = False
+
     def fuseArtifact(self, artifact):
         fuse = False
         rem = []

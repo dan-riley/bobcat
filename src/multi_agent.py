@@ -924,12 +924,11 @@ class MultiAgent(object):
         return False
 
     def updateArtifacts(self):
-        updatedArtifacts = False
         for neighbor in self.neighbors.values():
             updatedArtifacts = self.artifactCheck(neighbor)
 
-        if updatedArtifacts:
-            self.artifactsUpdated = True
+            if updatedArtifacts:
+                self.artifactsUpdated = True
 
     def run(self):
         return False
