@@ -369,7 +369,7 @@ class MARobot(MultiAgent):
         # Get all of the goals into a list
         goals = self.agent.goals.goals
 
-        if not goals:
+        if not goals or len(self.neighbors) == 0:
             # Set the goal to the frontier goal
             self.agent.goal.pose = self.agent.exploreGoal
             self.agent.goal.path = self.agent.explorePath
