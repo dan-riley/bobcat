@@ -272,7 +272,7 @@ class DataListener:
             self.node_sub = \
                 rospy.Subscriber('/' + self.agent.id + '/' + topics['node'],
                                  Bool, self.Receiver, 'atnode', queue_size=1)
-            self.size_sub = \
+            self.mapdiffs_sub = \
                 rospy.Subscriber('/' + self.agent.id + '/' + topics['mapDiffs'],
                                  OctomapArray, self.Receiver, 'mapDiffs')
 
@@ -647,7 +647,7 @@ class MultiAgent(object):
 
         nid = data.agent
         if nid and applyAgent and data.stamp > self.neighbors[nid].resetStamp:
-            print(self.id, 'resetting data for', nid)
+            rospy.loginfo(self.id, 'resetting data for', nid)
             self.neighbors[nid].resetStamp = data.stamp
             self.neighbors[nid].diffClear = data.clear
 
@@ -685,7 +685,7 @@ class MultiAgent(object):
         # Reset self map and multiagent data (if passed)
         reset = self.agent.reset
         if reset.stamp > self.agent.resetStamp and reset.agent == self.id and reset.hardReset:
-            print(self.id, 'hard resetting!')
+            rospy.loginfo(self.id, 'hard resetting!')
             # If ma_reset true then re-initialize everything
             if reset.ma_reset:
                 self.agent.initialize(reset.stamp)
@@ -915,7 +915,7 @@ class MultiAgent(object):
                     updateString = True
                     self.fuseArtifact(self.artifacts[aid])
 
-                print(self.id, 'new artifact from', agent.id, artifact.obj_class, aid)
+                rospy.loginfo(self.id, 'new artifact from', agent.id, artifact.obj_class, aid)
 
         if updateString:
             agent.updateHash()

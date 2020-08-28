@@ -233,7 +233,7 @@ class MARobot(MultiAgent):
                 state.model_name = deploy
                 state.pose = pose
 
-            print(self.id, 'deploying beacon', deploy, 'for', dropReason)
+            rospy.loginfo(self.id, 'deploying beacon', deploy, 'for', dropReason)
             try:
                 # Deploy a virtual beacon whether using virtual, sim or live
                 self.deploy_breadcrumb_pub.publish(Empty())
@@ -252,7 +252,8 @@ class MARobot(MultiAgent):
                     # Wait to stop, send deploy message, then wait for deployment to finish
                     rospy.sleep(3)
                     self.deploy_pub.publish(True)
-                    rospy.sleep(10)
+                    if not self.useVirtual:
+                        rospy.sleep(10)
 
                 # Resume the mission
                 self.stop_pub.publish(True)
@@ -266,7 +267,7 @@ class MARobot(MultiAgent):
             except Exception as e:
                 rospy.logerr('Error deploying beacon %s', str(e))
         else:
-            print(self.id, "no beacon to deploy")
+            rospy.loginfo(self.id, "no beacon to deploy")
             # Most likely reason it thought we had a beacon is due to restart.  So set num=0.
             self.numBeacons = 0
             self.mode = 'Explore'
@@ -363,7 +364,7 @@ class MARobot(MultiAgent):
 
         # Identify our report so we can track that the base station has seen it
         if self.report:
-            print('will report...')
+            rospy.loginfo('will report...')
 
     def deconflictGoals(self):
         # Get all of the goals into a list
@@ -395,7 +396,7 @@ class MARobot(MultiAgent):
                             conflict = True
                             if not self.newTask:
                                 self.updateStatus('Replanning')
-                            print(str(self.id) + " replanning")
+                            rospy.loginfo(str(self.id) + " replanning")
                             # Don't need to check any more neighbors for this goal if conflict
                             break
                         else:
@@ -418,7 +419,7 @@ class MARobot(MultiAgent):
         self.stop_pub.publish(False)
 
         if self.stopStart and self.useSimComms:
-            print(self.id, "stopping")
+            rospy.loginfo(self.id, "stopping")
             path = Path()
             path.header.frame_id = 'world'
             inplace = PoseStamped()
@@ -476,16 +477,16 @@ class MARobot(MultiAgent):
 
                 if self.stuck > self.stopCheck:
                     self.updateStatus('Stuck')
-                    print(self.id, 'has not moved!')
+                    rospy.loginfo(self.id, 'has not moved!')
             elif not self.agent.goal.path.poses:
                 # Report no path available
                 self.updateStatus('No Path')
-                # print(self.id, 'no path!')
+                # rospy.loginfo(self.id, 'no path!')
 
         # For future use, to handle tasks coming from the topic
         # Maybe this should just be separate topic
         if self.newTask and self.newTaskExternal:
-            print(self.id, 'received external new task', self.newTask)
+            rospy.loginfo(self.id, 'received external new task', self.newTask)
 
         checkBeacon = True
         # Manage the newest task sent
@@ -554,10 +555,10 @@ class MARobot(MultiAgent):
                     artifact.reported = True
 
                 # Resume normal operation (check mode or explore)
-                print(self.id, 'resuming operation...')
+                rospy.loginfo(self.id, 'resuming operation...')
             else:
                 if self.agent.status != 'Report':
-                    print(self.id, 'return to report...')
+                    rospy.loginfo(self.id, 'return to report...')
                 self.setGoalPoint('Report')
                 # Don't check for other mode when in report
                 return True
@@ -568,7 +569,7 @@ class MARobot(MultiAgent):
         elif self.mode == 'Stop':
             self.stop()
         elif self.mode == 'Deploy':
-            print(self.id, 'reverse deploy mode')
+            rospy.loginfo(self.id, 'reverse deploy mode')
             if self.base.incomm:
                 self.deployBeacon(True, 'Regain comms')
                 self.mode = 'Explore'
@@ -579,13 +580,13 @@ class MARobot(MultiAgent):
         elif self.mode == 'Goal':
             if (getDist(self.agent.odometry.pose.pose.position,
                         self.agent.guiGoalPoint.pose.position) < 1.0):
-                print(self.id, 'resuming exploration...')
+                rospy.loginfo(self.id, 'resuming exploration...')
                 self.mode = 'Explore'
                 # May want to add other options for tasks when it reaches the goal
                 self.deconflictExplore()
             else:
                 if self.agent.status != 'guiCommand':
-                    print(self.id, 'setting GUI Goal Point...')
+                    rospy.loginfo(self.id, 'setting GUI Goal Point...')
                 self.setGoalPoint('guiCommand')
         else:
             # Normal exploration with coordination
