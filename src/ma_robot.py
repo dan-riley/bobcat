@@ -434,7 +434,10 @@ class MARobot(MultiAgent):
     def setGoalPoint(self, reason):
         # Set the goal point for frontier exploration
         if reason == 'guiCommand':
+            # Publishing resets the seq, but we're using that to track new commands, so save it
+            seq = self.agent.guiGoalPoint.header.seq
             self.pub_guiGoal.publish(self.agent.guiGoalPoint)
+            self.agent.guiGoalPoint.header.seq = seq
         else:
             # For now Home and Report need this set to switch frontier exploration
             self.home_pub.publish(True)

@@ -487,6 +487,20 @@ class MultiAgent(object):
     def getStatus(self):
         return self.agent.status
 
+    def subsample(self, goal):
+        pubgoal = Goal()
+        pubgoal.pose = goal.pose
+        pubgoal.path.header.frame_id = goal.path.header.frame_id
+
+        for i, pose in enumerate(goal.path.poses):
+            if i % 20 == 0:
+                pubgoal.path.poses.append(pose)
+
+        if pubgoal.path.poses[-1] != goal.path.poses[-1]:
+            pubgoal.path.poses.append(goal.path.poses[-1])
+
+        return pubgoal
+
     def buildAgentMessage(self, msg, agent):
         msg.id = agent.id
         msg.cid = agent.cid
@@ -496,7 +510,7 @@ class MultiAgent(object):
         msg.guiGoalPoint = agent.guiGoalPoint
         msg.odometry = agent.odometry
         msg.lastMessage.data = agent.lastMessage
-        msg.goal = agent.goal
+        msg.goal = self.subsample(agent.goal)
         msg.reset = agent.reset
 
         # Need to clear any image data.  Will be overwritten by subscriber if done elswhere
