@@ -496,7 +496,7 @@ class MultiAgent(object):
             if i % 20 == 0:
                 pubgoal.path.poses.append(pose)
 
-        if pubgoal.path.poses[-1] != goal.path.poses[-1]:
+        if pubgoal.path.poses and pubgoal.path.poses[-1] != goal.path.poses[-1]:
             pubgoal.path.poses.append(goal.path.poses[-1])
 
         return pubgoal
