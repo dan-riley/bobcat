@@ -11,6 +11,7 @@ from std_msgs.msg import String
 from nav_msgs.msg import Path
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
+from visualization_msgs.msg import Marker
 from marble_artifact_detection_msgs.msg import ArtifactImg
 from marble_origin_detection_msgs.msg import OriginDetectionStatus
 
@@ -106,26 +107,28 @@ class MARobot(MultiAgent):
         self.hislen = self.rate * 10  # How long the odometry history should be
         self.minAnchorDist = 10  # Minimum distance before a beacon is ever dropped
         self.report = False
-        self.newTask = False
-        self.newTaskExternal = False
-        self.taskCount = 0
+        self.newStatus = False
+        self.statusCount = 0
         self.beaconCommLost = 0
         self.stopStart = True
         self.mode = 'Explore'
         self.stuck = 0
+        self.planner_status = True
+        self.useTraj = False
 
         self.task_pub = rospy.Publisher('task', String, queue_size=10)
         self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
         self.deploy_breadcrumb_pub = rospy.Publisher('breadcrumb/deploy', Empty, queue_size=10)
         self.reset_pub = rospy.Publisher('reset_artifacts', Bool, queue_size=10)
         self.num_pub = rospy.Publisher('num_neighbors', Int8, queue_size=10)
+        self.traj_pub = rospy.Publisher('follow_traj', Bool, queue_size=10)
         self.home_pub = rospy.Publisher(homeTopic, Bool, queue_size=10)
         self.stop_pub = rospy.Publisher(stopTopic, Bool, queue_size=10)
         self.comm_pub = rospy.Publisher(baseCommTopic, Bool, queue_size=10)
         self.goal_pub = rospy.Publisher(goalTopic, PoseStamped, queue_size=10)
         self.path_pub = rospy.Publisher(pathTopic, Path, queue_size=10)
         self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
-        self.task_sub = rospy.Subscriber('task', String, self.TaskMonitor)
+        self.planner_sub = rospy.Subscriber('planner_status', Bool, self.PlannerMonitor)
 
         self.pub_guiTask = {}
         self.pub_guiTask['estop'] = rospy.Publisher('estop', Bool, queue_size=10)
@@ -133,23 +136,31 @@ class MARobot(MultiAgent):
         self.pub_guiTask['radio_reset_cmd'] = rospy.Publisher('radio_reset_cmd', Bool, queue_size=10)
         self.pub_guiGoal = rospy.Publisher('guiGoalPoint', PoseStamped, queue_size=10)
 
+        # Create sphere markers for blacklist points, at the same size as the blacklist
+        self.pub_blacklist = rospy.Publisher('blacklist', Marker, queue_size=10, latch=True)
+        self.blgoals = {}
+        self.blacklist = Marker()
+        self.blacklist.header.frame_id = 'world'
+        self.blacklist.type = self.blacklist.SPHERE_LIST
+        self.blacklist.action = self.blacklist.ADD
+        self.blacklist.scale.x = self.deconflictRadius * 2
+        self.blacklist.scale.y = self.deconflictRadius * 2
+        self.blacklist.scale.z = self.deconflictRadius * 2
+        self.blacklist.color.a = 1.0
+        self.blacklist.color.r = 1.0
+        self.blacklist.color.g = 0.0
+        self.blacklist.color.b = 1.0
+
         self.commListen = True
 
     def WaitMonitor(self, data):
         if data.status > 0:
             self.wait = False
 
-    def TaskMonitor(self, data):
-        normalStatus = ['Able to plan home', 'Exploring']
-        if data.data != self.agent.status and data.data not in normalStatus:
-            self.newTask = data.data
-            self.newTaskExternal = True
-        elif self.taskCount > 10:
-            self.newTask = False
-            self.newTaskExternal = False
-            self.taskCount = 0
-        else:
-            self.taskCount += 1
+    def PlannerMonitor(self, data):
+        self.planner_status = data.data
+        if not self.planner_status:
+            self.updateStatus('Unable to plan')
 
     def publishGUITask(self):
         if self.agent.guiTaskValue == 'True':
@@ -175,15 +186,21 @@ class MARobot(MultiAgent):
             self.history = self.history[-self.hislen:]
 
     def updateStatus(self, status):
-        if self.newTask and status not in self.newTask:
-            self.newTask += '+++' + status
+        if self.newStatus and status not in self.newStatus:
+            self.newStatus += '+++' + status
         else:
-            self.newTask = status
-            self.newTaskExternal = False
+            self.newStatus = status
 
     def getStatus(self):
-        if self.newTask:
-            status = self.agent.status + '+++' + self.newTask
+        # Clear out the additional status messages every so often
+        if self.statusCount > 5:
+            self.newStatus = False
+            self.statusCount = 0
+        else:
+            self.statusCount += 1
+
+        if self.newStatus:
+            status = self.agent.status + '+++' + self.newStatus
         else:
             status = self.agent.status
 
@@ -370,8 +387,9 @@ class MARobot(MultiAgent):
         # Get all of the goals into a list
         goals = self.agent.goals.goals
 
-        if not goals or len(self.neighbors) == 0:
+        if not goals:
             # Set the goal to the frontier goal
+            # This should cause us to navigate to the goal, then go home if still no plan
             self.agent.goal.pose = self.agent.exploreGoal
             self.agent.goal.path = self.agent.explorePath
         elif len(goals) == 1:
@@ -381,36 +399,60 @@ class MARobot(MultiAgent):
         else:
             # TODO add check for location of neighbor and don't go there
             # Otherwise, deconflict with neighbor goals
-            # Assume conflict to start
+            # Start true to initiate loop
             conflict = True
             i = 0
+            goodGoal = None
             while conflict and i < len(goals):
                 # Check each goal in order for conflict with any neighbors
                 gpos = goals[i].pose.pose.position
-                for neighbor in self.neighbors.values():
-                    npos = neighbor.goal.pose.pose.position
-                    # Check whether they are within the defined range
-                    if getDist(gpos, npos) < self.deconflictRadius:
-                        # If our cost is more than the neighbor, don't go to this goal
-                        if goals[i].cost.data > neighbor.goal.cost.data:
-                            conflict = True
-                            if not self.newTask:
-                                self.updateStatus('Replanning')
-                            rospy.loginfo(self.id + ' replanning')
-                            # Don't need to check any more neighbors for this goal if conflict
-                            break
-                        else:
-                            conflict = False
+                # Assume the point will be good to start
+                conflict = False
 
-                    # No conflict with this neighbor
-                    # If each neighbor has no conflict with this goal, the while loop ends
-                    conflict = False
+                for goal in self.blacklist.points:
+                    if getDist(gpos, goal) < self.deconflictRadius:
+                        conflict = True
+                        self.updateStatus('Replanning Blacklist')
+                        rospy.loginfo(self.id + ' replanning due to blacklist ' + str(i))
+                        break
+
+                if not conflict:
+                    # If it's not blacklisted, identify the 'best' (first) goal
+                    if not goodGoal:
+                        goodGoal = goals[i]
+                    # Check each neighbors' goal for conflict
+                    for neighbor in self.neighbors.values():
+                        npos = neighbor.goal.pose.pose.position
+                        # Check whether they are within the defined range
+                        if getDist(gpos, npos) < self.deconflictRadius:
+                            # If our cost is more than the neighbor, don't go to this goal
+                            if goals[i].cost.data > neighbor.goal.cost.data:
+                                conflict = True
+                                self.updateStatus('Replanning Neighbor')
+                                rospy.loginfo(self.id + ' replanning due to neighbor ' + str(i))
+                                # Don't need to check any more neighbors for this goal if conflict
+                                break
 
                 # Check the next goal
                 i += 1
 
-            # Set the goal to the last goal without conflict
-            self.agent.goal = goals[i - 1]
+            # Decide which goal to use, or whether to go home
+            self.useTraj = False
+            if conflict:
+                # Conflict will still be true if all goals conflict, so use the best
+                if goodGoal:
+                    self.agent.goal = goodGoal
+                    if len(goals) > 1:
+                        rospy.loginfo(self.id + ' all goals conflict, using best')
+                else:
+                    # All goals blacklisted, so go home
+                    self.agent.goal.pose = self.agent.exploreGoal
+                    self.agent.goal.path = self.agent.explorePath
+                    rospy.loginfo(self.id + ' all goals blacklisted ' + str(len(goals)))
+                    self.useTraj = True
+            else:
+                # Set the goal to the last goal without conflict
+                self.agent.goal = goals[i - 1]
 
     def stop(self):
         # Stop the robot by publishing no path, but don't change the displayed goal
@@ -451,14 +493,37 @@ class MARobot(MultiAgent):
         self.agent.goal.pose = self.agent.exploreGoal
         self.agent.goal.path = self.agent.explorePath
 
+        if not self.planner_status and reason != 'guiCommand':
+            self.traj_pub.publish(True)
+            self.updateStatus('Following Trajectory')
+            rospy.loginfo(self.id + ' using trajectory follower for home')
+        else:
+            self.traj_pub.publish(False)
+
     def deconflictExplore(self):
         # Explore with goal deconfliction
         self.stopStart = True
         self.agent.status = 'Explore'
         self.home_pub.publish(False)
         self.task_pub.publish(self.agent.status)
-        # Find the best goal point to go to and publish
+        # Find the best goal point to go to
         self.deconflictGoals()
+
+        # If the planner can't plan, and we've reached the previous goal, or are stuck,
+        # switch to trajectory follower to go towards home
+        if self.useTraj or (not self.planner_status and (self.stuck > self.stopCheck or
+                getDist(self.agent.goal.pose.pose.position,
+                        self.agent.odometry.pose.pose.position) < 1.0)):
+            self.traj_pub.publish(True)
+            self.updateStatus('Following Trajectory')
+            rospy.loginfo(self.id + ' using trajectory follower during explore')
+            # Stop using the old goal and path or else we'll get stuck in a loop
+            self.agent.goal.pose = self.agent.exploreGoal
+            self.agent.goal.path = self.agent.explorePath
+        else:
+            self.traj_pub.publish(False)
+
+        # Publish the selected goal and path for the guidance controller
         self.goal_pub.publish(self.agent.goal.pose)
         self.path_pub.publish(self.agent.goal.path)
 
@@ -473,23 +538,54 @@ class MARobot(MultiAgent):
         if self.startedMission and self.agent.status != 'Stop':
             if self.agent.goal.path.poses and len(self.history) == self.hislen:
                 # Check if we've been stopped if we have a goal
-                if getDist(self.history[0].position, self.history[-1].position) < 0.5:
+                if (getDist(self.history[0].position, self.history[-1].position) < 0.5 and
+                        abs(angleDiff(math.degrees(getYaw(self.history[0].orientation)),
+                                      math.degrees(getYaw(self.history[-1].orientation)))) < 90):
                     self.stuck += 1
+                    goal = self.agent.goal.pose.pose.position
+                    goalstr = str(goal.x) + str(goal.y) + str(goal.z)
+                    if goalstr in self.blgoals:
+                        self.blgoals[goalstr]['count'] += 1
+                    else:
+                        self.blgoals[goalstr] = {}
+                        self.blgoals[goalstr]['goal'] = self.agent.goal.pose.pose.position
+                        self.blgoals[goalstr]['count'] = 0
                 else:
                     self.stuck = 0
+                    self.blgoals = {}
 
-                if self.stuck > self.stopCheck:
+                # If stuck, report and append to blacklist so we don't try to go here again
+                if self.stuck >= self.stopCheck:
+                    # Only add to the blacklist at the stopCheck intervals,
+                    # or else they get added too often
+                    if self.stuck % self.stopCheck == 0:
+                        # Find the most common one
+                        highcount = 0
+                        for goalstr in self.blgoals:
+                            if self.blgoals[goalstr]['count'] > highcount:
+                                goal = self.blgoals[goalstr]['goal']
+                                highcount = self.blgoals[goalstr]['count']
+
+                        # Make sure it's not the origin
+                        if not (goal.x == 0 and goal.y == 0 and goal.z == 0):
+                            addBlacklist = True
+                            # Make sure it's not already in a blacklist radius
+                            for bgoal in self.blacklist.points:
+                                if getDist(bgoal, goal) < self.deconflictRadius:
+                                    addBlacklist = False
+
+                            # Add it
+                            if addBlacklist:
+                                self.blacklist.points.append(goal)
+                                self.pub_blacklist.publish(self.blacklist)
+
                     self.updateStatus('Stuck')
                     rospy.loginfo(self.id + ' has not moved!')
+
             elif not self.agent.goal.path.poses:
                 # Report no path available
                 self.updateStatus('No Path')
                 # rospy.loginfo(self.id + ' no path!')
-
-        # For future use, to handle tasks coming from the topic
-        # Maybe this should just be separate topic
-        if self.newTask and self.newTaskExternal:
-            rospy.loginfo(self.id + ' received external new task ' + self.newTask)
 
         checkBeacon = True
         # Manage the newest task sent
@@ -577,8 +673,7 @@ class MARobot(MultiAgent):
                 self.deployBeacon(True, 'Regain comms')
                 self.mode = 'Explore'
             else:
-                if not self.newTask:
-                    self.updateStatus('Regain comms deploy')
+                self.updateStatus('Regain comms deploy')
                 self.setGoalPoint('Home')
         elif self.mode == 'Goal':
             if (getDist(self.agent.odometry.pose.pose.position,
