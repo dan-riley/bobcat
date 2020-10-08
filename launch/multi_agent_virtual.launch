@@ -10,6 +10,7 @@
   <arg name="potentialNeighbors" default="" />
   <arg name="stopCheck" default="15" />
   <arg name="delayDrop" default="false" />
+  <arg name="reverseDrop" default="true" />
 
   <include file="$(find marble_multi_agent)/launch/multi_agent.launch">
     <arg name="totalBeacons" value="24" />
@@ -31,5 +32,6 @@
     <arg name="potentialNeighbors" value="$(arg potentialNeighbors)" />
     <arg name="stopCheck" value="$(arg stopCheck)" />
     <arg name="delayDrop" value="$(arg delayDrop)" />
+    <arg name="reverseDrop" value="$(arg reverseDrop)" />
   </include>
 </launch>

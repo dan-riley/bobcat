@@ -110,6 +110,7 @@ class MARobot(MultiAgent):
         self.newStatus = False
         self.statusCount = 0
         self.beaconCommLost = 0
+        self.baseRegain = 0
         self.stopStart = True
         self.mode = 'Explore'
         self.stuck = 0
@@ -535,21 +536,21 @@ class MARobot(MultiAgent):
         self.updateHistory()
 
         # Do status checks once we've started the mission
-        if self.startedMission and self.agent.status != 'Stop':
+        if self.startedMission and self.agent.status != 'Stop' and 'A' not in self.id:
             if self.agent.goal.path.poses and len(self.history) == self.hislen:
                 # Check if we've been stopped if we have a goal
                 if (getDist(self.history[0].position, self.history[-1].position) < 0.5 and
                         abs(angleDiff(math.degrees(getYaw(self.history[0].orientation)),
                                       math.degrees(getYaw(self.history[-1].orientation)))) < 90):
                     self.stuck += 1
-                    goal = self.agent.goal.pose.pose.position
-                    goalstr = str(goal.x) + str(goal.y) + str(goal.z)
+                    cgoal = self.agent.goal.pose.pose.position
+                    goalstr = str(cgoal.x) + '-' + str(cgoal.y) + '-' + str(cgoal.z)
                     if goalstr in self.blgoals:
                         self.blgoals[goalstr]['count'] += 1
                     else:
                         self.blgoals[goalstr] = {}
-                        self.blgoals[goalstr]['goal'] = self.agent.goal.pose.pose.position
-                        self.blgoals[goalstr]['count'] = 0
+                        self.blgoals[goalstr]['goal'] = cgoal
+                        self.blgoals[goalstr]['count'] = 1
                 else:
                     self.stuck = 0
                     self.blgoals = {}
@@ -565,6 +566,7 @@ class MARobot(MultiAgent):
                             if self.blgoals[goalstr]['count'] > highcount:
                                 goal = self.blgoals[goalstr]['goal']
                                 highcount = self.blgoals[goalstr]['count']
+                                strgoal = goalstr
 
                         # Make sure it's not the origin
                         if not (goal.x == 0 and goal.y == 0 and goal.z == 0):
@@ -576,6 +578,7 @@ class MARobot(MultiAgent):
 
                             # Add it
                             if addBlacklist:
+                                rospy.loginfo(self.id + ' added ' + strgoal + ' to blacklist')
                                 self.blacklist.points.append(goal)
                                 self.pub_blacklist.publish(self.blacklist)
 
@@ -670,9 +673,15 @@ class MARobot(MultiAgent):
         elif self.mode == 'Deploy':
             rospy.loginfo(self.id + ' reverse deploy mode')
             if self.base.incomm:
-                self.deployBeacon(True, 'Regain comms')
-                self.mode = 'Explore'
+                # Wait for a solid connection before dropping
+                if self.regainBase > 5:
+                    self.deployBeacon(True, 'Regain comms')
+                    self.mode = 'Explore'
+                    self.regainBase = 0
+                else:
+                    self.regainBase += 1
             else:
+                self.regainBase = 0
                 self.updateStatus('Regain comms deploy')
                 self.setGoalPoint('Home')
         elif self.mode == 'Goal':
