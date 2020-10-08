@@ -290,12 +290,30 @@ class MARobot(MultiAgent):
             self.numBeacons = 0
             self.mode = 'Explore'
 
+    def beaconDistCheck(self, pose, checkDist, dropBeacon):
+        numBeacons = 0
+        numDistBeacons = 0
+        for beacon in self.beacons.values():
+            if beacon.active:
+                # Count the beacons we know about, and check distance
+                numBeacons = numBeacons + 1
+                dist = getDist(pose.position, beacon.pos)
+
+                # Count how many beacons are past max range
+                if dist > checkDist:
+                    numDistBeacons = numDistBeacons + 1
+                    dropBeacon = True
+
+        # Cancel the drop if we have more than one beacon in range
+        if numBeacons - numDistBeacons > 0:
+            dropBeacon = False
+
+        return dropBeacon, numBeacons, numDistBeacons
+
     def beaconCheck(self):
         # Check if we need to drop a beacon if we have any beacons to drop
         if self.numBeacons > 0:
             pose = self.agent.odometry.pose.pose
-            numBeacons = 0
-            numDistBeacons = 0
             dropBeacon = False
             dropReason = ''
 
@@ -337,22 +355,10 @@ class MARobot(MultiAgent):
                         dropReason = 'at turn'
                         checkDist = self.junctionDist + 5
 
-                for beacon in self.beacons.values():
-                    if beacon.active:
-                        # Count the beacons we know about, and check distance
-                        numBeacons = numBeacons + 1
-                        dist = getDist(pose.position, beacon.pos)
+                dropBeacon, numBeacons, numDistBeacons = self.beaconDistCheck(pose, checkDist, dropBeacon)
 
-                        # Count how many beacons are past max range
-                        if dist > checkDist:
-                            numDistBeacons = numDistBeacons + 1
-                            dropBeacon = True
-                            if dropReason == '' or dropReason == 'anchor distance':
-                                dropReason = 'beacon distance'
-
-                # Cancel the drop if we have more than one beacon in range
-                if numBeacons - numDistBeacons > 0:
-                    dropBeacon = False
+                if numDistBeacons > 0 and (dropReason == '' or dropReason == 'anchor distance'):
+                    dropReason = 'beacon distance'
 
                 # Prevent dropping after returning home after the first beacon drop
                 # TODO look at the angle between anchor and first beacon and calculate positions
@@ -675,7 +681,16 @@ class MARobot(MultiAgent):
             if self.base.incomm:
                 # Wait for a solid connection before dropping
                 if self.regainBase > 5:
-                    self.deployBeacon(True, 'Regain comms')
+                    # Make sure there's no beacons already in the area
+                    pose = self.agent.odometry.pose.pose
+                    checkDist = self.junctionDist + 5
+                    dropBeacon = True
+                    dropBeacon, nB, nDB = self.beaconDistCheck(pose, checkDist, dropBeacon)
+                    if dropBeacon:
+                        self.deployBeacon(True, 'Regain comms')
+                    else:
+                        # TODO might need to do more here to prevent a loop where it keeps trying
+                        rospy.loginfo(self.id + ' beacon too close, cancelling drop')
                     self.mode = 'Explore'
                     self.regainBase = 0
                 else:
