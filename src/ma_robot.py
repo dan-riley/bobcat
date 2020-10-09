@@ -103,6 +103,7 @@ class MARobot(MultiAgent):
 
         self.startedMission = False
         self.initialPose = False
+        self.bl_beacons = []
         self.history = []
         self.hislen = self.rate * 10  # How long the odometry history should be
         self.minAnchorDist = 10  # Minimum distance before a beacon is ever dropped
@@ -375,7 +376,21 @@ class MARobot(MultiAgent):
                 self.beaconCommLost += 1
                 # If we're not talking to the base station, attempt to reverse drop
                 if self.beaconCommLost > 5:
-                    self.mode = 'Deploy'
+                    reverse = True
+                    # Check if we've already attempted a reverse drop in this area
+                    # Sometimes there are deadzones and this can cause a loop if not accounted for
+                    for bl in self.bl_beacons:
+                        if getDist(pose.position, bl) < self.junctionDist:
+                            reverse = False
+                            rospy.loginfo(self.id + ' skipping reverse drop due to previous try')
+                            break
+
+                    # Change the mode to deploy, and add to the list of previously tried positions
+                    if reverse:
+                        self.mode = 'Deploy'
+                        self.bl_beacons.append(pose.position)
+
+                    # Reset the counter so we don't attempt again right away
                     self.beaconCommLost = 0
 
     def artifactCheckReport(self):
@@ -389,6 +404,22 @@ class MARobot(MultiAgent):
         # Identify our report so we can track that the base station has seen it
         if self.report:
             rospy.loginfo('will report...')
+
+    def checkBlacklist(self, goal):
+        addBlacklist = True
+        # Make sure it's not already in a blacklist radius
+        for bgoal in self.blacklist.points:
+            if getDist(bgoal, goal) < self.deconflictRadius:
+                addBlacklist = False
+
+        return addBlacklist
+
+    def addBlacklist(self, goal):
+        if self.checkBlacklist(goal):
+            goalstr = str(goal.x) + '-' + str(goal.y) + '-' + str(goal.z)
+            rospy.loginfo(self.id + ' added ' + goalstr + ' to blacklist')
+            self.blacklist.points.append(goal)
+            self.pub_blacklist.publish(self.blacklist)
 
     def deconflictGoals(self):
         # Get all of the goals into a list
@@ -461,6 +492,17 @@ class MARobot(MultiAgent):
                 # Set the goal to the last goal without conflict
                 self.agent.goal = goals[i - 1]
 
+        # Final blacklist check
+        goal = self.agent.goal.pose.pose.position
+        if len(self.agent.goal.path.poses) > 0:
+            pathend = self.agent.goal.path.poses[-1].pose.position
+        else:
+            pathend = goal
+
+        if not self.checkBlacklist(goal) or not self.checkBlacklist(pathend):
+            rospy.loginfo(self.id + ' only goal is blacklisted, using trajectory follower')
+            self.useTraj = True
+
     def stop(self):
         # Stop the robot by publishing no path, but don't change the displayed goal
         self.agent.status = 'Stop'
@@ -527,6 +569,13 @@ class MARobot(MultiAgent):
             # Stop using the old goal and path or else we'll get stuck in a loop
             self.agent.goal.pose = self.agent.exploreGoal
             self.agent.goal.path = self.agent.explorePath
+
+            # If we're stuck, with no plan, but we've reached the end of the path, blacklist this
+            if len(self.agent.goal.path.poses) > 0:
+                pathend = self.agent.goal.path.poses[-1].pose.position
+                if (not self.planner_status and getDist(pathend,
+                        self.agent.odometry.pose.pose.position) < 1.0):
+                   self.addBlacklist(pathend)
         else:
             self.traj_pub.publish(False)
 
@@ -572,21 +621,10 @@ class MARobot(MultiAgent):
                             if self.blgoals[goalstr]['count'] > highcount:
                                 goal = self.blgoals[goalstr]['goal']
                                 highcount = self.blgoals[goalstr]['count']
-                                strgoal = goalstr
 
                         # Make sure it's not the origin
                         if not (goal.x == 0 and goal.y == 0 and goal.z == 0):
-                            addBlacklist = True
-                            # Make sure it's not already in a blacklist radius
-                            for bgoal in self.blacklist.points:
-                                if getDist(bgoal, goal) < self.deconflictRadius:
-                                    addBlacklist = False
-
-                            # Add it
-                            if addBlacklist:
-                                rospy.loginfo(self.id + ' added ' + strgoal + ' to blacklist')
-                                self.blacklist.points.append(goal)
-                                self.pub_blacklist.publish(self.blacklist)
+                            self.addBlacklist(goal)
 
                     self.updateStatus('Stuck')
                     rospy.loginfo(self.id + ' has not moved!')
@@ -689,7 +727,7 @@ class MARobot(MultiAgent):
                     if dropBeacon:
                         self.deployBeacon(True, 'Regain comms')
                     else:
-                        # TODO might need to do more here to prevent a loop where it keeps trying
+                        # The bl_beacons should prevent this from occuring too many times
                         rospy.loginfo(self.id + ' beacon too close, cancelling drop')
                     self.mode = 'Explore'
                     self.regainBase = 0
