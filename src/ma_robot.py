@@ -483,25 +483,27 @@ class MARobot(MultiAgent):
                     if len(goals) > 1:
                         rospy.loginfo(self.id + ' all goals conflict, using best')
                 else:
-                    # All goals blacklisted, so go home
+                    # All goals blacklisted, start going home, but clear the blacklist
                     self.agent.goal.pose = self.agent.exploreGoal
                     self.agent.goal.path = self.agent.explorePath
+                    self.blacklist.points = []
                     rospy.loginfo(self.id + ' all goals blacklisted ' + str(len(goals)))
                     self.useTraj = True
             else:
                 # Set the goal to the last goal without conflict
                 self.agent.goal = goals[i - 1]
 
-        # Final blacklist check
-        goal = self.agent.goal.pose.pose.position
-        if len(self.agent.goal.path.poses) > 0:
-            pathend = self.agent.goal.path.poses[-1].pose.position
-        else:
-            pathend = goal
+        # Final blacklist check for single goal
+        if not goals or len(goals) == 1:
+            goal = self.agent.goal.pose.pose.position
+            if len(self.agent.goal.path.poses) > 0:
+                pathend = self.agent.goal.path.poses[-1].pose.position
+            else:
+                pathend = goal
 
-        if not self.checkBlacklist(goal) or not self.checkBlacklist(pathend):
-            rospy.loginfo(self.id + ' only goal is blacklisted, using trajectory follower')
-            self.useTraj = True
+            if not self.checkBlacklist(goal) or not self.checkBlacklist(pathend):
+                rospy.loginfo(self.id + ' only goal is blacklisted, using trajectory follower')
+                self.useTraj = True
 
     def stop(self):
         # Stop the robot by publishing no path, but don't change the displayed goal
@@ -678,6 +680,11 @@ class MARobot(MultiAgent):
             # This is only accurate if times are relatively in sync (within 60-ish seconds)
             if neighbor.lastMessage > neighbor_check:
                 num_neighbors += 1
+
+        # Tell the planner to add more goals for every blacklist we have
+        # TODO if planner takes blacklist into account, remove this!
+        for blacklist in self.blacklist.points:
+            num_neighbors += 1
 
         # Publish the number of neighbors that frontier exploration should consider
         self.num_pub.publish(num_neighbors)
