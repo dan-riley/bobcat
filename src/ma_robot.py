@@ -422,6 +422,25 @@ class MARobot(MultiAgent):
             self.pub_blacklist.publish(self.blacklist)
 
     def deconflictGoals(self):
+        curgoal = self.agent.goal.pose.pose.position
+        curpos = self.agent.odometry.pose.pose.position
+        # Keep going to long distance goal, unless it's home, or we get a new potential goal close
+        # TODO make these ranges based off of sensor range in launch file
+        if (getDist(curpos, self.agent.exploreGoal.pose.position) > 5.0 and
+                getDist(curpos, curgoal) > 7.0 and
+                not (curgoal.x == 0 and curgoal.y == 0 and curgoal.z == 0)):
+
+            # Make sure this goal isn't blacklisted, which could happen after it was chosen
+            conflict = False
+            for goal in self.blacklist.points:
+                if getDist(curgoal, goal) < self.deconflictRadius:
+                    conflict = True
+                    break
+
+            if not conflict:
+                rospy.loginfo(self.id + ' continuing to long distance goal')
+                return
+
         # Get all of the goals into a list
         goals = self.agent.goals.goals
 
