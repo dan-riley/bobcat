@@ -54,6 +54,20 @@ def averagePose(history):
     return pos, yaw
 
 
+def averagePosition(history):
+    pos = Point()
+    for position in history:
+        pos.x = pos.x + position.x
+        pos.y = pos.y + position.y
+        pos.z = pos.z + position.z
+
+    pos.x = pos.x / float(len(history))
+    pos.y = pos.y / float(len(history))
+    pos.z = pos.z / float(len(history))
+
+    return pos
+
+
 def angleDiff(a, b):
     # Computes a-b, preserving the correct sign (counter-clockwise positive angles)
     # All angles are in degrees
@@ -140,7 +154,7 @@ class MARobot(MultiAgent):
 
         # Create sphere markers for blacklist points, at the same size as the blacklist
         self.pub_blacklist = rospy.Publisher('blacklist', Marker, queue_size=10, latch=True)
-        self.blgoals = {}
+        self.blgoals = []
         self.blacklist = Marker()
         self.blacklist.header.frame_id = 'world'
         self.blacklist.type = self.blacklist.SPHERE_LIST
@@ -422,6 +436,9 @@ class MARobot(MultiAgent):
             self.pub_blacklist.publish(self.blacklist)
 
     def deconflictGoals(self):
+        # Get all of the goals into a list
+        goals = self.agent.goals.goals
+        # Last goal and path chosen
         curgoal = self.agent.goal.pose.pose.position
         curpos = self.agent.odometry.pose.pose.position
         # Keep going to long distance goal, unless it's home, or we get a new potential goal close
@@ -438,11 +455,19 @@ class MARobot(MultiAgent):
                     break
 
             if not conflict:
+                # Check if there's an updated path for this goal, or one near it
+                if not goals:
+                    if getDist(curgoal, self.agent.exploreGoal.pose.position) < 0.5:
+                        self.agent.goal.pose = self.agent.exploreGoal
+                        self.agent.goal.path = self.agent.explorePath
+                else:
+                    for goal in goals:
+                        if getDist(curgoal, goal.pose.pose.position) < 0.5:
+                            self.agent.goal = goal
+                            break
+
                 rospy.loginfo(self.id + ' continuing to long distance goal')
                 return
-
-        # Get all of the goals into a list
-        goals = self.agent.goals.goals
 
         if not goals:
             # Set the goal to the frontier goal
@@ -466,6 +491,7 @@ class MARobot(MultiAgent):
                 # Assume the point will be good to start
                 conflict = False
 
+                # Global planner should take care of this now, but it's a double check
                 for goal in self.blacklist.points:
                     if getDist(gpos, goal) < self.deconflictRadius:
                         conflict = True
@@ -617,35 +643,35 @@ class MARobot(MultiAgent):
                 # Check if we've been stopped if we have a goal
                 if (getDist(self.history[0].position, self.history[-1].position) < 0.5 and
                         abs(angleDiff(math.degrees(getYaw(self.history[0].orientation)),
-                                      math.degrees(getYaw(self.history[-1].orientation)))) < 90):
+                                      math.degrees(getYaw(self.history[-1].orientation)))) < 60):
                     self.stuck += 1
-                    cgoal = self.agent.goal.pose.pose.position
-                    goalstr = str(cgoal.x) + '-' + str(cgoal.y) + '-' + str(cgoal.z)
-                    if goalstr in self.blgoals:
-                        self.blgoals[goalstr]['count'] += 1
-                    else:
-                        self.blgoals[goalstr] = {}
-                        self.blgoals[goalstr]['goal'] = cgoal
-                        self.blgoals[goalstr]['count'] = 1
+                    # Add the current goal to potential blacklist points
+                    self.blgoals.append(self.agent.goal.pose.pose.position)
                 else:
                     self.stuck = 0
-                    self.blgoals = {}
+                    self.blgoals = []
 
                 # If stuck, report and append to blacklist so we don't try to go here again
                 if self.stuck >= self.stopCheck:
                     # Only add to the blacklist at the stopCheck intervals,
                     # or else they get added too often
                     if self.stuck % self.stopCheck == 0:
-                        # Find the most common one
-                        highcount = 0
-                        for goalstr in self.blgoals:
-                            if self.blgoals[goalstr]['count'] > highcount:
-                                goal = self.blgoals[goalstr]['goal']
-                                highcount = self.blgoals[goalstr]['count']
+                        # Get the average goal position
+                        avgGoal = averagePosition(self.blgoals)
+                        # Remove outliers
+                        newgoals = []
+                        for goal in self.blgoals:
+                            if getDist(goal, avgGoal) < self.deconflictRadius * 2:
+                                newgoals.append(goal)
 
-                        # Make sure it's not the origin
-                        if not (goal.x == 0 and goal.y == 0 and goal.z == 0):
-                            self.addBlacklist(goal)
+                        # Get the new average goal position, and only if there are enough
+                        if len(newgoals) > self.hislen / 2:
+                            avgGoal = averagePosition(newgoals)
+
+                            # Make sure it's not the origin
+                            if not (avgGoal.x == 0 and avgGoal.y == 0 and avgGoal.z == 0):
+                                self.addBlacklist(avgGoal)
+                                self.blgoals = []
 
                     self.updateStatus('Stuck')
                     rospy.loginfo(self.id + ' has not moved!')
@@ -699,11 +725,6 @@ class MARobot(MultiAgent):
             # This is only accurate if times are relatively in sync (within 60-ish seconds)
             if neighbor.lastMessage > neighbor_check:
                 num_neighbors += 1
-
-        # Tell the planner to add more goals for every blacklist we have
-        # TODO if planner takes blacklist into account, remove this!
-        for blacklist in self.blacklist.points:
-            num_neighbors += 1
 
         # Publish the number of neighbors that frontier exploration should consider
         self.num_pub.publish(num_neighbors)
