@@ -908,21 +908,36 @@ class MultiAgent(object):
         for artifact in agent.newArtifacts.artifacts:
             aid = artifact.artifact_id
             if aid not in self.artifacts and artifact.position.x and artifact.position.y:
+                addArtifact = True
                 # Check if there's a similar artifact already stored so we don't report
                 if agent.id == self.id:
                     # Mark that we need to update our hash
-                    updateString = True
+                    updateString = False
                     ignore = False
                     for artifact2 in self.artifacts.values():
                         if getDist2D(artifact.position, artifact2.artifact.position) < 3:
                             ignore = True
 
+                    # Skip artifacts that might be another robot
+                    if artifact.obj_class == 'rope':
+                        for neighbor in self.neighbors.values():
+                            if getDist(neighbor.odometry.pose.pose.position, artifact.position) < 5:
+                                addArtifact = False
+                                ignore = True
+                                rospy.loginfo(self.id + ' skipping artifact due to neighbor')
+                                break
+
                     if not ignore:
                         self.report = True
+                        updateString = True
 
                 # Now add the artifact to the array
                 self.artifacts[aid] = ArtifactReport(agent.id, artifact, self.sendImages)
-                agent.addArtifact(artifact)
+
+                if addArtifact:
+                    agent.addArtifact(artifact)
+                else:
+                    self.artifacts[aid].reported = True
 
                 # At the base station, fuse the artifacts and make sure we mark an update
                 if self.type == 'base':
