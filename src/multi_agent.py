@@ -927,6 +927,13 @@ class MultiAgent(object):
                                 rospy.loginfo(self.id + ' skipping artifact due to neighbor')
                                 break
 
+                        for beacon in self.beacons.values():
+                            if getDist(beacon.pos, artifact.position) < 2:
+                                addArtifact = False
+                                ignore = True
+                                rospy.loginfo(self.id + ' skipping artifact due to beacon')
+                                break
+
                     if not ignore:
                         self.report = True
                         updateString = True
