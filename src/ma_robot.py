@@ -100,7 +100,8 @@ class MARobot(MultiAgent):
         # Whether this agent should delay their drop so the trailing robot can
         self.delayDrop = rospy.get_param('multi_agent/delayDrop', False)
         # Whether to backtrack to deploy a beacon
-        self.reverseDrop = rospy.get_param('multi_agent/reverseDrop', False)
+        self.reverseDropEnable = rospy.get_param('multi_agent/reverseDrop', False)
+        self.reverseDrop = self.reverseDropEnable
         # Topics for publishers
         homeTopic = rospy.get_param('multi_agent/homeTopic', 'report_artifact')
         stopTopic = rospy.get_param('multi_agent/stopTopic', 'nearness_controller/enable_control')
@@ -335,6 +336,9 @@ class MARobot(MultiAgent):
             # We're connected to the mesh, either through anchor or beacon(s)
             if self.base.incomm:
                 self.beaconCommLost = 0
+                # Reset to global config so we can manipulate after cancelled drops
+                # This should re-enable dropping if we re-gain comms after a cancelled drop
+                self.reverseDrop = self.reverseDropEnable
 
                 # Once we pass the maxDist we could set a flag so we don't keep recalculating this
                 anchorDist = getDist(pose.position, self.anchorPos)
@@ -390,17 +394,16 @@ class MARobot(MultiAgent):
                 self.beaconCommLost += 1
                 # If we're not talking to the base station, attempt to reverse drop
                 if self.beaconCommLost > 5:
-                    reverse = True
                     # Check if we've already attempted a reverse drop in this area
                     # Sometimes there are deadzones and this can cause a loop if not accounted for
                     for bl in self.bl_beacons:
                         if getDist(pose.position, bl) < self.junctionDist:
-                            reverse = False
+                            self.reverseDrop = False
                             rospy.loginfo(self.id + ' skipping reverse drop due to previous try')
                             break
 
                     # Change the mode to deploy, and add to the list of previously tried positions
-                    if reverse:
+                    if self.reverseDrop:
                         self.mode = 'Deploy'
                         self.bl_beacons.append(pose.position)
 
@@ -768,7 +771,7 @@ class MARobot(MultiAgent):
                 if self.regainBase > 5:
                     # Make sure there's no beacons already in the area
                     pose = self.agent.odometry.pose.pose
-                    checkDist = self.junctionDist + 5
+                    checkDist = self.junctionDist
                     dropBeacon = True
                     dropBeacon, nB, nDB = self.beaconDistCheck(pose, checkDist, dropBeacon)
                     if dropBeacon:

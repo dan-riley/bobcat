@@ -2,9 +2,16 @@
 <launch>
   <arg name="vehicle" default="H01" />
   <arg name="useMesh" default="false" />
+  <arg name="turnDetect" default="true" />
+  <arg name="delayDrop" default="false" />
+  <arg name="reverseDrop" default="true" />
+
   <include file="$(find marble_multi_agent)/launch/multi_agent.launch">
     <arg name="vehicle" value="$(arg vehicle)" />
     <arg name="type" value="robot" />
     <arg name="useMesh" value="$(arg useMesh)" />
+    <arg name="turnDetect" value="$(arg turnDetect)" />
+    <arg name="delayDrop" value="$(arg delayDrop)" />
+    <arg name="reverseDrop" value="$(arg reverseDrop)" />
   </include>
 </launch>
