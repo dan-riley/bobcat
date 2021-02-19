@@ -14,6 +14,7 @@ from geometry_msgs.msg import PoseStamped
 from visualization_msgs.msg import Marker
 from marble_artifact_detection_msgs.msg import ArtifactImg
 from marble_origin_detection_msgs.msg import OriginDetectionStatus
+from marble_multi_agent.msg import AgentReset
 
 from multi_agent import MultiAgent, ArtifactReport, getDist, getDist2D
 
@@ -131,6 +132,8 @@ class MARobot(MultiAgent):
         self.mode = 'Explore'
         self.stuck = 0
         self.planner_status = True
+        self.launch_status = True
+        self.isAerial = False
         self.useTraj = False
 
         self.task_pub = rospy.Publisher('task', String, queue_size=10)
@@ -146,6 +149,7 @@ class MARobot(MultiAgent):
         self.path_pub = rospy.Publisher(pathTopic, Path, queue_size=10)
         self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
         self.planner_sub = rospy.Subscriber('planner_status', Bool, self.PlannerMonitor)
+        self.launch_sub = rospy.Subscriber('velocity_controller/enable', Bool, self.LaunchMonitor)
 
         self.pub_guiTask = {}
         self.pub_guiTask['estop'] = rospy.Publisher('estop', Bool, queue_size=10)
@@ -178,6 +182,10 @@ class MARobot(MultiAgent):
         self.planner_status = data.data
         if not self.planner_status:
             self.updateStatus('Unable to plan')
+
+    def LaunchMonitor(self, data):
+        self.isAerial = True
+        self.launch_status = data.data
 
     def publishGUITask(self):
         if self.agent.guiTaskValue == 'True':
@@ -801,5 +809,25 @@ class MARobot(MultiAgent):
         else:
             # Normal exploration with coordination
             self.deconflictExplore()
+
+        # Have the aerial robots prevent maps from being merged until they're airborne
+        # Useful particularly for marsupials
+        # May consider using seqs to clear instead, as 'ignore' will cause the entire map
+        # to get transmitted once the robot launches, but seqs means it was transmitted and
+        # then thrown away...not sure best approach
+        if self.isAerial and not self.launch_status and not self.agent.reset.ignore:
+            rospy.loginfo('ignore aerial maps until launched')
+            self.agent.reset.stamp = rospy.get_rostime()
+            self.agent.reset.agent = self.id
+            self.agent.reset.ignore = True
+            self.agent.reset.robots = True
+            self.agent.guiStamp = self.agent.reset.stamp
+        elif self.isAerial and self.launch_status and self.agent.reset.ignore:
+            rospy.loginfo('aerial robot launched, stop ignoring maps')
+            self.agent.reset.agent = self.id
+            self.agent.reset.ignore = False
+            self.agent.reset.robots = True
+            self.agent.reset.stamp = rospy.get_rostime()
+            self.agent.guiStamp = self.agent.reset.stamp
 
         return True
