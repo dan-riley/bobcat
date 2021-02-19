@@ -3,8 +3,8 @@ from __future__ import print_function
 import sys
 import rospy
 
-from marble_multi_agent.msg import CommsCheck
-from marble_multi_agent.msg import CommsCheckArray
+from bobcat.msg import CommsCheck
+from bobcat.msg import CommsCheckArray
 from std_msgs.msg import String
 
 

@@ -13,18 +13,18 @@ from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
 from marble_artifact_detection_msgs.msg import ArtifactArray
 from marble_artifact_detection_msgs.msg import ArtifactImg
-from marble_multi_agent.msg import AgentMsg
-from marble_multi_agent.msg import AgentReset
-from marble_multi_agent.msg import NeighborMsg
-from marble_multi_agent.msg import CommsCheckArray
-from marble_multi_agent.msg import Beacon
-from marble_multi_agent.msg import BeaconArray
-from marble_multi_agent.msg import Goal
-from marble_multi_agent.msg import GoalArray
-from marble_multi_agent.msg import DMReq
-from marble_multi_agent.msg import DMReqArray
-from marble_multi_agent.msg import DMResp
-from marble_multi_agent.msg import DMRespArray
+from bobcat.msg import AgentMsg
+from bobcat.msg import AgentReset
+from bobcat.msg import NeighborMsg
+from bobcat.msg import CommsCheckArray
+from bobcat.msg import Beacon
+from bobcat.msg import BeaconArray
+from bobcat.msg import Goal
+from bobcat.msg import GoalArray
+from bobcat.msg import DMReq
+from bobcat.msg import DMReqArray
+from bobcat.msg import DMResp
+from bobcat.msg import DMRespArray
 from marble_mapping.msg import OctomapArray
 from marble_mapping.msg import OctomapNeighbors
 
@@ -280,53 +280,53 @@ class DataListener:
         setattr(self.agent, parameter, data)
 
 
-class MultiAgent(object):
+class BOBCAT(object):
     """ Initialize a multi-agent node for the agent, publishes data for others and listens """
 
     def __init__(self):
         # Load parameters from the launch file
-        self.id = rospy.get_param('multi_agent/vehicle', 'H01')
-        self.type = rospy.get_param('multi_agent/type', 'robot')
+        self.id = rospy.get_param('bobcat/vehicle', 'H01')
+        self.type = rospy.get_param('bobcat/type', 'robot')
         # Rate to run the node at
-        self.rate = rospy.get_param('multi_agent/rate', 1)
+        self.rate = rospy.get_param('bobcat/rate', 1)
         # Whether to republish neighbor data for visualization or other uses
-        self.useMonitor = rospy.get_param('multi_agent/monitor', False)
+        self.useMonitor = rospy.get_param('bobcat/monitor', False)
         # Whether to use simulated comms or real comms
-        self.useSimComms = rospy.get_param('multi_agent/simcomms', False)
+        self.useSimComms = rospy.get_param('bobcat/simcomms', False)
         # Whether to run the agent without a base station (comms always true)
-        self.solo = rospy.get_param('multi_agent/solo', False)
+        self.solo = rospy.get_param('bobcat/solo', False)
         # Whether to include images in reports at all (disable for low bandwidth!)
-        self.sendImages = rospy.get_param('multi_agent/sendImages', True)
+        self.sendImages = rospy.get_param('bobcat/sendImages', True)
         # Whether to ensure images are sent with artifacts to decide whether reporting is complete
-        self.reportImages = rospy.get_param('multi_agent/reportImages', True)
+        self.reportImages = rospy.get_param('bobcat/reportImages', True)
         # Time without message for lost comm
-        self.commThreshold = rospy.Duration(rospy.get_param('multi_agent/commThreshold', 2))
+        self.commThreshold = rospy.Duration(rospy.get_param('bobcat/commThreshold', 2))
         # Time to wait before trying another agent for direct message requests
-        self.dmWait = rospy.Duration(rospy.get_param('multi_agent/dmWait', 3))
+        self.dmWait = rospy.Duration(rospy.get_param('bobcat/dmWait', 3))
         # Whether to send DMs in one large message or split for comms
-        self.dmSplit = rospy.Duration(rospy.get_param('multi_agent/dmSplit', True))
+        self.dmSplit = rospy.Duration(rospy.get_param('bobcat/dmSplit', True))
         # Total number of potential beacons
-        totalBeacons = rospy.get_param('multi_agent/totalBeacons', 16)
+        totalBeacons = rospy.get_param('bobcat/totalBeacons', 16)
         # Potential robot neighbors to monitor
-        neighbors = rospy.get_param('multi_agent/potentialNeighbors', 'H01,H02,H03').split(',')
+        neighbors = rospy.get_param('bobcat/potentialNeighbors', 'H01,H02,H03').split(',')
         # Beacons this robot is carrying
-        self.myBeacons = rospy.get_param('multi_agent/myBeacons', '').split(',')
+        self.myBeacons = rospy.get_param('bobcat/myBeacons', '').split(',')
         self.numBeacons = len(self.myBeacons) if self.myBeacons[0] != '' else 0
         # Topics for publishers
-        self.pubTopic = rospy.get_param('multi_agent/pubTopic', 'ma_data')
-        self.commTopic = rospy.get_param('multi_agent/commTopic', 'mesh_comm')
-        useMesh = rospy.get_param('multi_agent/useMesh', False)
-        self.useVirtual = rospy.get_param('multi_agent/useVirtual', False)
+        self.pubTopic = rospy.get_param('bobcat/pubTopic', 'ma_data')
+        self.commTopic = rospy.get_param('bobcat/commTopic', 'mesh_comm')
+        useMesh = rospy.get_param('bobcat/useMesh', False)
+        self.useVirtual = rospy.get_param('bobcat/useVirtual', False)
         # Topics for subscribers
         topics = {}
-        topics['odometry'] = rospy.get_param('multi_agent/odomTopic', 'odometry')
-        topics['exploreGoal'] = rospy.get_param('multi_agent/exploreGoalTopic', 'frontier_goal_pose')
-        topics['explorePath'] = rospy.get_param('multi_agent/explorePathTopic', 'planned_path')
-        topics['goals'] = rospy.get_param('multi_agent/goalsTopic', 'goal_array')
-        topics['mapDiffs'] = rospy.get_param('multi_agent/mapDiffsTopic', 'map_diffs')
-        topics['node'] = rospy.get_param('multi_agent/nodeTopic', 'at_node_center')
-        topics['artifacts'] = rospy.get_param('multi_agent/artifactsTopic', 'artifact_array/relay')
-        topics['artifactImages'] = rospy.get_param('multi_agent/artifactImagesTopic', 'artifact_image_to_base')
+        topics['odometry'] = rospy.get_param('bobcat/odomTopic', 'odometry')
+        topics['exploreGoal'] = rospy.get_param('bobcat/exploreGoalTopic', 'frontier_goal_pose')
+        topics['explorePath'] = rospy.get_param('bobcat/explorePathTopic', 'planned_path')
+        topics['goals'] = rospy.get_param('bobcat/goalsTopic', 'goal_array')
+        topics['mapDiffs'] = rospy.get_param('bobcat/mapDiffsTopic', 'map_diffs')
+        topics['node'] = rospy.get_param('bobcat/nodeTopic', 'at_node_center')
+        topics['artifacts'] = rospy.get_param('bobcat/artifactsTopic', 'artifact_array/relay')
+        topics['artifactImages'] = rospy.get_param('bobcat/artifactImagesTopic', 'artifact_image_to_base')
 
         if not self.sendImages:
             self.reportImages = False
@@ -350,7 +350,7 @@ class MultiAgent(object):
         self.lastDMReq = rospy.Time()
         self.dmReqs = []
 
-        rospy.init_node(self.id + '_multi_agent')
+        rospy.init_node(self.id + '_bobcat')
         self.start_time = rospy.get_rostime()
         while self.start_time.secs == 0:
             self.start_time = rospy.get_rostime()

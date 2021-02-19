@@ -14,12 +14,12 @@ from geometry_msgs.msg import PoseStamped
 from visualization_msgs.msg import Marker
 from marble_artifact_detection_msgs.msg import ArtifactImg
 from marble_origin_detection_msgs.msg import OriginDetectionStatus
-from marble_multi_agent.msg import AgentReset
+from bobcat.msg import AgentReset
 
-from multi_agent import MultiAgent, ArtifactReport, getDist, getDist2D
+from BOBCAT import BOBCAT, ArtifactReport, getDist, getDist2D
 
 # Import Ignition/Gazebo only if running in the sim so the robot doesn't need them
-if rospy.get_param('multi_agent/simcomms', False):
+if rospy.get_param('bobcat/simcomms', False):
     # Switch for ignition or gazebo here temporarily until I find a better place
     useIgnition = True
 
@@ -79,43 +79,43 @@ def angleDiff(a, b):
     return d
 
 
-class MARobot(MultiAgent):
+class BCRobot(BOBCAT):
     """ Initialize a multi-agent robot node """
 
     def __init__(self):
         # Get all of the parent class variables
-        MultiAgent.__init__(self)
+        BOBCAT.__init__(self)
 
         # Distance to maintain goal point deconfliction
-        self.deconflictRadius = rospy.get_param('multi_agent/deconflictRadius', 2.5)
+        self.deconflictRadius = rospy.get_param('bobcat/deconflictRadius', 2.5)
         # Time stopped to report if stuck
-        self.stopCheck = rospy.get_param('multi_agent/stopCheck', 30)
+        self.stopCheck = rospy.get_param('bobcat/stopCheck', 30)
         # Distance from Anchor to drop beacons automatically
-        self.maxAnchorDist = rospy.get_param('multi_agent/anchorDropDist', 100)
+        self.maxAnchorDist = rospy.get_param('bobcat/anchorDropDist', 100)
         # Distance to drop beacons automatically
-        self.maxDist = rospy.get_param('multi_agent/dropDist', 30)
+        self.maxDist = rospy.get_param('bobcat/dropDist', 30)
         # Minimum distance between junctions before dropping another beacon
-        self.junctionDist = rospy.get_param('multi_agent/junctionDist', 10)
+        self.junctionDist = rospy.get_param('bobcat/junctionDist', 10)
         # Whether to use turn detection to drop beacons
-        self.turnDetect = rospy.get_param('multi_agent/turnDetect', True)
+        self.turnDetect = rospy.get_param('bobcat/turnDetect', True)
         # Whether this agent should delay their drop so the trailing robot can
-        self.delayDrop = rospy.get_param('multi_agent/delayDrop', False)
+        self.delayDrop = rospy.get_param('bobcat/delayDrop', False)
         # Whether to backtrack to deploy a beacon
-        self.reverseDropEnable = rospy.get_param('multi_agent/reverseDrop', False)
+        self.reverseDropEnable = rospy.get_param('bobcat/reverseDrop', False)
         self.reverseDrop = self.reverseDropEnable
         # Topics for publishers
-        homeTopic = rospy.get_param('multi_agent/homeTopic', 'report_artifact')
-        stopTopic = rospy.get_param('multi_agent/stopTopic', 'nearness_controller/enable_control')
-        waitTopic = rospy.get_param('multi_agent/waitTopic', 'origin_detection_status')
-        baseCommTopic = rospy.get_param('multi_agent/baseCommTopic', 'base_comm')
-        goalTopic = rospy.get_param('multi_agent/goalTopic', 'ma_goal')
-        pathTopic = rospy.get_param('multi_agent/pathTopic', 'ma_goal_path')
+        homeTopic = rospy.get_param('bobcat/homeTopic', 'report_artifact')
+        stopTopic = rospy.get_param('bobcat/stopTopic', 'nearness_controller/enable_control')
+        waitTopic = rospy.get_param('bobcat/waitTopic', 'origin_detection_status')
+        baseCommTopic = rospy.get_param('bobcat/baseCommTopic', 'base_comm')
+        goalTopic = rospy.get_param('bobcat/goalTopic', 'ma_goal')
+        pathTopic = rospy.get_param('bobcat/pathTopic', 'ma_goal_path')
 
         # Static anchor position
         self.anchorPos = Point()
-        self.anchorPos.x = rospy.get_param('multi_agent/anchorX', 1.0)
-        self.anchorPos.y = rospy.get_param('multi_agent/anchorY', 0.0)
-        self.anchorPos.z = rospy.get_param('multi_agent/anchorZ', 0.1)
+        self.anchorPos.x = rospy.get_param('bobcat/anchorX', 1.0)
+        self.anchorPos.y = rospy.get_param('bobcat/anchorY', 0.0)
+        self.anchorPos.z = rospy.get_param('bobcat/anchorZ', 0.1)
 
         self.startedMission = False
         self.initialPose = False

@@ -1,5 +1,5 @@
 #!/bin/bash
-git remote add upstream https://github.com/dan-riley/marble_multi_agent
+git remote add upstream https://github.com/dan-riley/bobcat
 git fetch upstream
 git checkout master
 git reset --hard upstream/master

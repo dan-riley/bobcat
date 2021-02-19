@@ -8,23 +8,23 @@ from geometry_msgs.msg import Pose
 from visualization_msgs.msg import Marker
 from visualization_msgs.msg import MarkerArray
 from marble_artifact_detection_msgs.msg import Artifact
-from marble_multi_agent.msg import AgentArtifact
-from marble_multi_agent.msg import AgentReset
-from marble_multi_agent.msg import ArtifactScore
+from bobcat.msg import AgentArtifact
+from bobcat.msg import AgentReset
+from bobcat.msg import ArtifactScore
 
-from multi_agent import MultiAgent, getDist2D
+from BOBCAT import BOBCAT, getDist2D
 
 
-class MABase(MultiAgent):
+class BCBase(BOBCAT):
     """ Initialize a multi-agent base station node """
 
     def __init__(self):
         # Get all of the parent class variables
-        MultiAgent.__init__(self)
+        BOBCAT.__init__(self)
         # Force the monitors on for Base type
         self.useMonitor = True
         # Distance to fuse artifacts within.  May want smaller to account for missed score reports.
-        self.fuseDist = rospy.get_param('multi_agent/fuseDist', 3.0)
+        self.fuseDist = rospy.get_param('bobcat/fuseDist', 3.0)
         # Storage for fused artifacts and reporting
         self.fusedArtifacts = {}
         self.fused_pub = rospy.Publisher('artifact_report', Artifact, queue_size=10)

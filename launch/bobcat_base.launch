@@ -2,7 +2,7 @@
 <launch>
   <arg name="useMesh" default="false" />
   <arg name="potentialNeighbors" default="H01,T02,A01" />
-  <include file="$(find marble_multi_agent)/launch/multi_agent.launch">
+  <include file="$(find bobcat)/launch/bobcat.launch">
     <arg name="vehicle" value="Base" />
     <arg name="type" value="base" />
     <arg name="monitor" value="true" />

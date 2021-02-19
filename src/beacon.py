@@ -2,15 +2,15 @@
 from __future__ import print_function
 import rospy
 from std_msgs.msg import Bool
-from multi_agent import MultiAgent, BeaconObj
+from BOBCAT import BOBCAT, BeaconObj
 
 
-class MABeacon(MultiAgent):
+class BCBeacon(BOBCAT):
     """ Initialize a multi-agent beacon node """
 
     def __init__(self):
         # Get all of the parent class variables
-        MultiAgent.__init__(self)
+        BOBCAT.__init__(self)
 
         self.beacon = BeaconObj(self.id, self.id)
         self.raiseAntenna = rospy.Publisher('/' + self.id + '/set_mast', Bool, queue_size=10)

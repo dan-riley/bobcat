@@ -13,7 +13,7 @@
   <arg name="delayDrop" default="false" />
   <arg name="reverseDrop" default="true" />
 
-  <include file="$(find marble_multi_agent)/launch/multi_agent.launch">
+  <include file="$(find bobcat)/launch/bobcat.launch">
     <arg name="totalBeacons" value="24" />
     <arg name="simcomms" value="false" />
     <arg name="anchorDropDist" value="80" />

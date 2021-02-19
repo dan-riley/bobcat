@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
-  <include file="$(find marble_multi_agent)/launch/multi_agent.launch">
+  <include file="$(find bobcat)/launch/bobcat.launch">
     <arg name="vehicle" value="$(env ROS_HOSTNAME)" />
     <arg name="type" value="beacon" />
     <arg name="useMesh" value="false" />

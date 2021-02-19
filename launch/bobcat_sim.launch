@@ -7,7 +7,7 @@
   <arg name="stopCheck" default="30" />
   <arg name="delayDrop" default="false" />
 
-  <include file="$(find marble_multi_agent)/launch/multi_agent.launch">
+  <include file="$(find bobcat)/launch/bobcat.launch">
     <arg name="totalBeacons" value="8" />
     <arg name="simcomms" value="true" />
     <arg name="anchorDropDist" value="30" />

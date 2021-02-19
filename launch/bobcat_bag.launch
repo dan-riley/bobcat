@@ -1,16 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
   <!-- Vehicle name for namespace and topic id -->
-  <arg name="vehicle" default="H01" />
+  <arg name="vehicle" default="H02" />
   <arg name="ns" default="/$(arg vehicle)" />
   <!-- Type of node.  Current options are 'robot' and 'base' -->
   <arg name="type" default="robot" />
-  <!-- List of the beacons this robot is carrying -->
-  <arg name="myBeacons" default="" />
-  <!-- Total number of beacons across all deployed agents.  Higher is ok. -->
-  <arg name="totalBeacons" default="16" />
-  <!-- List of all potentially deployed neighbors.  Determines what topics are subscribed. -->
-  <arg name="potentialNeighbors" default="" />
   <!-- Rate to run the node at -->
   <arg name="rate" default="1" />
   <!-- Whether to republish neighbor topics for visualization or other needs -->
@@ -19,105 +13,85 @@
   <arg name="simcomms" default="false" />
   <!-- Whether to run the agent solo (simulates always in comm with base) -->
   <arg name="solo" default="false" />
-  <!-- Whether to transmit images. Disable for low bandwidth situations.  May be different on each. -->
-  <arg name="sendImages" default="true" />
-  <!-- True ensures images are received by Base Station before exiting report -->
-  <!-- Set to false if comms may be an issue.  CAUTION: This must be the same on all agents! -->
-  <arg name="reportImages" default="true" />
-  <!-- Distance within which to fuse artifacts -->
-  <arg name="fuseDist" default="3.0" />
   <!-- Distance between goal points for deconfliction -->
   <arg name="deconflictRadius" default="2.5" />
   <!-- How long without a message to consider 'lost comms' -->
   <arg name="commThreshold" default="2" />
-  <!-- How long to wait before trying subsequent direct message requests -->
-  <arg name="dmWait" default="3" />
-  <!-- Whether to split DMs into single messages, or send as one large message -->
-  <arg name="dmSplit" default="true" />
-  <!-- How long to consider the robot as 'stuck'.  Use 3600 to disable for 1 hour -->
-  <arg name="stopCheck" default="30" />
   <!-- How far to drive from the anchor before automatically dropping a beacon -->
   <arg name="anchorDropDist" default="100" />
   <!-- How far to drive before automatically dropping a beacon -->
-  <arg name="dropDist" default="100" />
+  <arg name="dropDist" default="30" />
   <!-- Minimum distance between nodes before dropping another beacon -->
   <arg name="junctionDist" default="10" />
   <!-- Whether to use turn detection to drop beacons -->
   <arg name="turnDetect" default="true" />
   <!-- Whether to delay beacon deployment so the trailing robot can drop instead -->
   <arg name="delayDrop" default="false" />
-  <!-- Whether to reverse direction to drop a beacon due to comm loss -->
-  <arg name="reverseDrop" default="false" />
-  <!-- Topic to publish/subscribe data to neighbors -->
-  <arg name="pubTopic" default="ma_data" />
-  <!-- Topic for comms -->
-  <arg name="commTopic" default="mesh_comm" />
-  <!-- Whether to use UDP_Mesh comms (True) or Multimaster/Sim comms (False) -->
-  <arg name="useMesh" default="false" />
-  <!-- Whether to run in virtual mode.  If enabled, simcomms and useMesh should be false! -->
-  <arg name="useVirtual" default="false" />
+  <!-- How many beacons this agent is carrying.  Ignored for 'base' type. -->
+  <arg name="numBeacons" default="16" />
+  <!-- Total number of beacons across all deployed agents.  Higher is ok. -->
+  <arg name="totalBeacons" default="48" />
+  <!-- List of all potentially deployed neighbors.  Determines what topics are subscribed. -->
+  <arg name="potentialNeighbors" default="H01,H02,H03" />
+  <!-- Topic to publish/subscribe low bandwidth data to neighbors -->
+  <arg name="pubLowTopic" default="low_data" />
+  <!-- Topic to publish/subscribe high bandwidth data to neighbors -->
+  <arg name="pubHighTopic" default="high_data" />
   <!-- Topic the frontier exploration node listens to to calculate path home -->
   <arg name="homeTopic" default="report_artifact" />
+  <!-- Topic to monitor from base station to ensure we're in comm -->
+  <arg name="baseTopic" default="/Base/ma_status" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
-  <arg name="stopTopic" default="nearness_controller/enable_control" />
+  <arg name="stopTopic" default="stop_for_beacon_drop" />
+  <arg name="statusTopic" default="task_update" />
   <arg name="waitTopic" default="origin_detection_status" />
-  <arg name="baseCommTopic" default="base_comm" />
+  <arg name="commTopic" default="base_comm" />
   <arg name="odomTopic" default="odometry" />
-  <arg name="exploreGoalTopic" default="frontier_goal_pose" />
-  <arg name="explorePathTopic" default="planned_path" />
   <arg name="goalTopic" default="ma_goal" />
   <arg name="pathTopic" default="ma_goal_path" />
   <arg name="goalsTopic" default="goal_array" />
-  <arg name="mapDiffsTopic" default="map_diffs" />
+  <arg name="mapTopic" default="octomap_binary" />
+  <arg name="mapSizeTopic" default="merged_size" />
   <arg name="nodeTopic" default="at_node_center" />
   <arg name="artifactsTopic" default="artifact_array/relay" />
-  <arg name="artifactImagesTopic" default="artifact_image_to_base" />
   <!-- Approximate location of anchor node, for first beacon drop distance calc -->
   <arg name="anchorX" default="0.0" />
   <arg name="anchorY" default="0.0" />
   <arg name="anchorZ" default="0.0" />
 
-  <node ns="$(arg ns)" pkg="marble_multi_agent" type="multi_agent_node.py" name="multi_agent" output="screen">
+  <node ns="$(arg ns)" pkg="bobcat" type="bobcat_node.py" name="bobcat" output="screen">
     <!-- Parameters -->
     <param name="vehicle" value="$(arg vehicle)" />
     <param name="type" value="$(arg type)" />
-    <param name="myBeacons" value="$(arg myBeacons)" />
-    <param name="totalBeacons" value="$(arg totalBeacons)" />
-    <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
     <param name="rate" value="$(arg rate)" />
     <param name="monitor" value="$(arg monitor)" />
     <param name="simcomms" value="$(arg simcomms)" />
     <param name="solo" value="$(arg solo)" />
-    <param name="sendImages" value="$(arg sendImages)" />
-    <param name="reportImages" value="$(arg reportImages)" />
-    <param name="fuseDist" value="$(arg fuseDist)" />
     <param name="deconflictRadius" value="$(arg deconflictRadius)" />
     <param name="commThreshold" value="$(arg commThreshold)" />
-    <param name="dmWait" value="$(arg dmWait)" />
-    <param name="stopCheck" value="$(arg stopCheck)" />
     <param name="anchorDropDist" value="$(arg anchorDropDist)" />
     <param name="dropDist" value="$(arg dropDist)" />
     <param name="junctionDist" value="$(arg junctionDist)" />
     <param name="turnDetect" value="$(arg turnDetect)" />
     <param name="delayDrop" value="$(arg delayDrop)" />
-    <param name="reverseDrop" value="$(arg reverseDrop)" />
-    <param name="pubTopic" value="$(arg pubTopic)" />
-    <param name="commTopic" value="$(arg commTopic)" />
-    <param name="useMesh" value="$(arg useMesh)" />
-    <param name="useVirtual" value="$(arg useVirtual)" />
+    <param name="numBeacons" value="$(arg numBeacons)" />
+    <param name="totalBeacons" value="$(arg totalBeacons)" />
+    <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
+    <param name="pubLowTopic" value="$(arg pubLowTopic)" />
+    <param name="pubHighTopic" value="$(arg pubHighTopic)" />
     <param name="homeTopic" value="$(arg homeTopic)" />
+    <param name="baseTopic" value="$(arg baseTopic)" />
     <param name="stopTopic" value="$(arg stopTopic)" />
     <param name="waitTopic" value="$(arg waitTopic)" />
-    <param name="baseCommTopic" value="$(arg baseCommTopic)" />
+    <param name="commTopic" value="$(arg commTopic)" />
     <param name="odomTopic" value="$(arg odomTopic)" />
-    <param name="exploreGoalTopic" value="$(arg exploreGoalTopic)" />
-    <param name="explorePathTopic" value="$(arg explorePathTopic)" />
     <param name="goalTopic" value="$(arg goalTopic)" />
     <param name="pathTopic" value="$(arg pathTopic)" />
     <param name="goalsTopic" value="$(arg goalsTopic)" />
+    <param name="mapTopic" value="$(arg mapTopic)" />
+    <param name="mapSizeTopic" value="$(arg mapSizeTopic)" />
     <param name="nodeTopic" value="$(arg nodeTopic)" />
     <param name="artifactsTopic" value="$(arg artifactsTopic)" />
-    <param name="artifactImagesTopic" value="$(arg artifactImagesTopic)" />
     <param name="anchorX" value="$(arg anchorX)" />
     <param name="anchorY" value="$(arg anchorY)" />
     <param name="anchorZ" value="$(arg anchorZ)" />
