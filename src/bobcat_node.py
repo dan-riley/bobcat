@@ -2,6 +2,8 @@
 from __future__ import print_function
 import rospy
 
+# Each type of agent should have a module to overload the base BOBCAT class
+# Most will use the robot agent, but Base Station and Beacons (communications relays) are provided
 from robot import BCRobot
 from base import BCBase
 from beacon import BCBeacon

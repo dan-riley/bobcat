@@ -12,7 +12,8 @@ from bobcat.msg import AgentArtifact
 from bobcat.msg import AgentReset
 from bobcat.msg import ArtifactScore
 
-from BOBCAT import BOBCAT, getDist2D
+from util.helpers import getDist2D
+from BOBCAT import BOBCAT
 
 
 class BCBase(BOBCAT):

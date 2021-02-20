@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 from __future__ import print_function
-from cmath import rect, phase
 import math
 import rospy
 
@@ -12,11 +11,11 @@ from nav_msgs.msg import Path
 from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
 from visualization_msgs.msg import Marker
-from marble_artifact_detection_msgs.msg import ArtifactImg
 from marble_origin_detection_msgs.msg import OriginDetectionStatus
 from bobcat.msg import AgentReset
 
-from BOBCAT import BOBCAT, ArtifactReport, getDist, getDist2D
+from util.helpers import getDist, getDist2D, getYaw, averagePose, averagePosition, angleDiff
+from BOBCAT import BOBCAT
 
 # Import Ignition/Gazebo only if running in the sim so the robot doesn't need them
 if rospy.get_param('bobcat/simcomms', False):
@@ -28,55 +27,6 @@ if rospy.get_param('bobcat/simcomms', False):
         from subt_msgs.srv import SetPose
     else:
         from gazebo_msgs.srv import SetModelState
-
-
-def getYaw(orientation):
-    x = orientation.x
-    y = orientation.y
-    z = orientation.z
-    w = orientation.w
-    return math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
-
-
-def averagePose(history):
-    pos = Point()
-    yaw = 0
-    for pose in history:
-        pos.x = pos.x + pose.position.x
-        pos.y = pos.y + pose.position.y
-        pos.z = pos.z + pose.position.z
-        yaw = yaw + rect(1, getYaw(pose.orientation))
-
-    pos.x = pos.x / float(len(history))
-    pos.y = pos.y / float(len(history))
-    pos.z = pos.z / float(len(history))
-    yaw = math.degrees(phase(yaw))
-
-    return pos, yaw
-
-
-def averagePosition(history):
-    pos = Point()
-    for position in history:
-        pos.x = pos.x + position.x
-        pos.y = pos.y + position.y
-        pos.z = pos.z + position.z
-
-    pos.x = pos.x / float(len(history))
-    pos.y = pos.y / float(len(history))
-    pos.z = pos.z / float(len(history))
-
-    return pos
-
-
-def angleDiff(a, b):
-    # Computes a-b, preserving the correct sign (counter-clockwise positive angles)
-    # All angles are in degrees
-    a = (360000 + a) % 360
-    b = (360000 + b) % 360
-    d = a - b
-    d = (d + 180) % 360 - 180
-    return d
 
 
 class BCRobot(BOBCAT):

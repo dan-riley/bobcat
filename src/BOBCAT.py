@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 from __future__ import print_function
-import math
-import hashlib
 import rospy
 import copy
 
@@ -9,17 +7,13 @@ from std_msgs.msg import Bool
 from std_msgs.msg import String
 from nav_msgs.msg import Odometry
 from nav_msgs.msg import Path
-from geometry_msgs.msg import Point
 from geometry_msgs.msg import PoseStamped
 from marble_artifact_detection_msgs.msg import ArtifactArray
 from marble_artifact_detection_msgs.msg import ArtifactImg
 from bobcat.msg import AgentMsg
-from bobcat.msg import AgentReset
 from bobcat.msg import NeighborMsg
 from bobcat.msg import CommsCheckArray
 from bobcat.msg import Beacon
-from bobcat.msg import BeaconArray
-from bobcat.msg import Goal
 from bobcat.msg import GoalArray
 from bobcat.msg import DMReq
 from bobcat.msg import DMReqArray
@@ -28,256 +22,8 @@ from bobcat.msg import DMRespArray
 from marble_mapping.msg import OctomapArray
 from marble_mapping.msg import OctomapNeighbors
 
-
-def getDist(pos1, pos2):
-    return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2 + (pos1.z - pos2.z)**2)
-
-
-def getDist2D(pos1, pos2):
-    return math.sqrt((pos1.x - pos2.x)**2 + (pos1.y - pos2.y)**2)
-
-
-class Agent(object):
-    """ Data structure to hold pertinent information about other agents """
-
-    def __init__(self, agent_id, parent_id, agent_type, report_images):
-        self.id = agent_id
-        self.pid = parent_id
-        self.cid = ''
-        self.type = agent_type
-        self.reset = AgentReset()
-        self.reportImages = report_images
-        self.lastMessage = rospy.get_rostime()
-        self.lastDirectMessage = self.lastMessage
-        self.incomm = True
-        self.simcomm = True
-        self.initialize()
-        self.initializeMaps()
-
-    def initialize(self, resetTime=rospy.Time()):
-        self.status = ''
-        self.guiStamp = rospy.get_rostime()
-        self.guiTaskName = ''
-        self.guiTaskValue = ''
-        self.guiGoalPoint = PoseStamped()
-        self.guiAccept = False
-        self.guiGoalAccept = False
-        self.odometry = Odometry()
-        self.exploreGoal = PoseStamped()
-        self.explorePath = Path()
-        self.exploreGoal.header.frame_id = 'world'
-        self.explorePath.header.frame_id = 'world'
-        self.goal = Goal()
-        self.goals = GoalArray()
-        self.atnode = Bool()
-        self.commBeacons = BeaconArray()
-        self.newArtifacts = ArtifactArray()
-        self.checkArtifacts = ArtifactArray()
-        self.images = []
-        self.missingImages = []
-        self.lastArtifact = ''
-        self.resetStamp = resetTime
-        if resetTime:
-            self.resetAgent = True
-        else:
-            self.resetAgent = False
-
-    def initializeMaps(self, numDiffs=0, diffClear=False):
-        self.mapDiffs = OctomapArray()
-        self.mapDiffs.owner = self.id
-        self.updateMapDiffs = False
-        self.numDiffs = numDiffs
-        self.missingDiffs = []
-        self.diffClear = diffClear
-
-    def updateCommon(self, neighbor):
-        self.status = neighbor.status
-        self.odometry = neighbor.odometry
-        self.goal = neighbor.goal
-        self.newArtifacts = neighbor.newArtifacts
-
-        # Update missing diffs if the neighbor said there are new ones
-        if not self.diffClear and neighbor.numDiffs > self.numDiffs and not self.reset.ignore:
-            for i in range(self.numDiffs, neighbor.numDiffs):
-                if i not in self.missingDiffs:
-                    self.missingDiffs.append(i)
-            self.numDiffs = neighbor.numDiffs
-
-        # Identify new images available for request
-        for artifact in neighbor.newArtifacts.artifacts:
-            if (artifact.image_data.format != 'empty' and
-                    artifact.artifact_id not in self.images and
-                    artifact.artifact_id not in self.missingImages):
-                # Images we know about so we don't re-mark them for download
-                self.images.append(artifact.artifact_id)
-                # Images we haven't received yet
-                self.missingImages.append(artifact.artifact_id)
-
-        # Ignore the GUI message if it's old
-        if neighbor.guiStamp.data > self.guiStamp:
-            self.guiUpdate(neighbor)
-
-    def update(self, neighbor, updater=False):
-        # If this agent has been reset, don't accept messages until confirmed it has reset
-        if self.resetAgent:
-            if neighbor.reset.stamp < self.resetStamp:
-                return
-            else:
-                self.resetAgent = False
-
-        # Update parameters depending on if we're talking directly or not
-        if updater:
-            self.commBeacons = neighbor.commBeacons
-            self.cid = updater
-            self.lastMessage = neighbor.header.stamp
-            self.lastDirectMessage = rospy.get_rostime()
-            self.incomm = True
-            self.updateCommon(neighbor)
-        else:
-            self.updateCommon(neighbor)
-            self.cid = neighbor.cid
-            self.incomm = False
-            self.lastMessage = neighbor.lastMessage.data
-
-    def guiUpdate(self, neighbor):
-        self.guiStamp = neighbor.guiStamp.data
-
-        if neighbor.guiTaskName and neighbor.guiTaskValue:
-            self.guiTaskName = neighbor.guiTaskName
-            self.guiTaskValue = neighbor.guiTaskValue
-            self.guiAccept = True
-
-        # Accept goal point if it's updated
-        if neighbor.guiGoalPoint.header.seq > self.guiGoalPoint.header.seq:
-            self.guiGoalPoint = neighbor.guiGoalPoint
-
-        # Only accept reset if it's newer than the last one for this agent
-        if neighbor.reset.stamp > self.reset.stamp:
-            self.reset = neighbor.reset
-
-    def addArtifact(self, artifact):
-        self.checkArtifacts.artifacts.append(artifact)
-        self.checkArtifacts.owner = self.id
-        self.checkArtifacts.num_artifacts += 1
-
-    def updateHash(self):
-        # If set, ignore images when checking if Base has received new artifacts
-        if not self.reportImages:
-            for artifact in self.checkArtifacts.artifacts:
-                artifact.image_data.data = []
-        artifactString = repr(self.checkArtifacts.artifacts).encode('utf-8')
-        self.lastArtifact = hashlib.md5(artifactString).hexdigest()
-
-
-class Base(object):
-    """ Data structure to hold pertinent information about the base station """
-
-    def __init__(self):
-        self.baseStamp = rospy.get_rostime()
-        self.lastMessage = rospy.get_rostime()
-        self.lastDirectMessage = self.lastMessage
-        self.lastArtifact = ''
-        self.incomm = True
-        self.simcomm = True
-        self.baseArtifacts = []
-        self.commBeacons = BeaconArray()
-
-    def update(self, neighbor):
-        self.lastMessage = neighbor.header.stamp
-        self.lastDirectMessage = rospy.get_rostime()
-        self.commBeacons = neighbor.commBeacons
-
-    def updateArtifacts(self, agent_id, neighbor):
-        self.baseStamp = neighbor.baseStamp.data
-        self.baseArtifacts = neighbor.baseArtifacts
-        for agent in neighbor.baseArtifacts:
-            if agent.id == agent_id:
-                self.lastArtifact = agent.lastArtifact
-                break
-
-    def resetArtifact(self, agent_id):
-        for agent in self.baseArtifacts:
-            if agent.id == agent_id:
-                self.lastArtifact = ''
-                break
-
-
-class BeaconObj(object):
-    """ Data structure to hold pertinent information about beacons """
-
-    def __init__(self, agent, owner):
-        self.id = agent
-        self.owner = owner
-        self.pos = Point()
-        self.lastMessage = rospy.get_rostime()
-        self.lastDirectMessage = self.lastMessage
-        self.incomm = False
-        self.simcomm = False
-        self.active = False
-
-    def update(self, neighbor):
-        self.lastMessage = neighbor.header.stamp
-        self.lastDirectMessage = rospy.get_rostime()
-
-
-class ArtifactReport:
-    """
-    Internal artifact structure to track reporting.
-    Holds full artifact message so neighbors can be fused.
-    """
-
-    def __init__(self, agent_id, artifact, sendImages):
-        self.id = artifact.artifact_id
-        self.agent_id = agent_id
-        self.artifact = artifact
-        self.reported = False
-        self.score = 0
-        self.new = True
-        self.firstSeen = rospy.get_rostime()
-        self.lastPublished = rospy.Time()
-        self.originals = {}
-
-        # Mark empty data so we receiver doesn't try to request it
-        if not artifact.image_data.data or not sendImages:
-            artifact.image_data.format = 'empty'
-        # Save image so we can send it via DM
-        self.image = ArtifactImg()
-        if sendImages:
-            self.image.artifact_id = artifact.artifact_id
-            self.image.artifact_img = artifact.image_data
-
-
-class DataListener:
-    """ Listens to all of the applicable topics and repackages into a single object """
-
-    def __init__(self, agent, topics):
-        self.agent = agent  # Agent object
-
-        if self.agent.type == 'robot':
-            self.artifact_sub = \
-                rospy.Subscriber('/' + self.agent.id + '/' + topics['artifacts'],
-                                 ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
-            self.odom_sub = \
-                rospy.Subscriber('/' + self.agent.id + '/' + topics['odometry'],
-                                 Odometry, self.Receiver, 'odometry', queue_size=1)
-            self.explore_goal_sub = \
-                rospy.Subscriber('/' + self.agent.id + '/' + topics['exploreGoal'],
-                                 PoseStamped, self.Receiver, 'exploreGoal', queue_size=1)
-            self.explore_path_sub = \
-                rospy.Subscriber('/' + self.agent.id + '/' + topics['explorePath'],
-                                 Path, self.Receiver, 'explorePath', queue_size=1)
-            self.goals_sub = \
-                rospy.Subscriber('/' + self.agent.id + '/' + topics['goals'],
-                                 GoalArray, self.Receiver, 'goals', queue_size=1)
-            self.node_sub = \
-                rospy.Subscriber('/' + self.agent.id + '/' + topics['node'],
-                                 Bool, self.Receiver, 'atnode', queue_size=1)
-            self.mapdiffs_sub = \
-                rospy.Subscriber('/' + self.agent.id + '/' + topics['mapDiffs'],
-                                 OctomapArray, self.Receiver, 'mapDiffs')
-
-    def Receiver(self, data, parameter):
-        setattr(self.agent, parameter, data)
+from util.helpers import getDist, getDist2D, subsample
+from containers import Agent, Base, BeaconObj, ArtifactReport
 
 
 class BOBCAT(object):
@@ -357,7 +103,7 @@ class BOBCAT(object):
 
         # Initialize object for our own data
         self.agent = Agent(self.id, self.id, self.type, self.reportImages)
-        DataListener(self.agent, topics)
+        self.DataListener(topics)
 
         # Initialize base station
         self.base = Base()
@@ -401,6 +147,38 @@ class BOBCAT(object):
         # Publisher for the packaged data
         self.data_pub = rospy.Publisher(self.broadcastPubTopic, AgentMsg, queue_size=1)
 
+    ##### Start Local Message Aggregation #####
+    def DataListener(self, topics):
+        """ Listens to all of the applicable topics and repackages into a single object """
+
+        if self.type == 'robot':
+            self.artifact_sub = \
+                rospy.Subscriber('/' + self.id + '/' + topics['artifacts'],
+                                 ArtifactArray, self.Receiver, 'newArtifacts', queue_size=1)
+            self.odom_sub = \
+                rospy.Subscriber('/' + self.id + '/' + topics['odometry'],
+                                 Odometry, self.Receiver, 'odometry', queue_size=1)
+            self.explore_goal_sub = \
+                rospy.Subscriber('/' + self.id + '/' + topics['exploreGoal'],
+                                 PoseStamped, self.Receiver, 'exploreGoal', queue_size=1)
+            self.explore_path_sub = \
+                rospy.Subscriber('/' + self.id + '/' + topics['explorePath'],
+                                 Path, self.Receiver, 'explorePath', queue_size=1)
+            self.goals_sub = \
+                rospy.Subscriber('/' + self.id + '/' + topics['goals'],
+                                 GoalArray, self.Receiver, 'goals', queue_size=1)
+            self.node_sub = \
+                rospy.Subscriber('/' + self.id + '/' + topics['node'],
+                                 Bool, self.Receiver, 'atnode', queue_size=1)
+            self.mapdiffs_sub = \
+                rospy.Subscriber('/' + self.id + '/' + topics['mapDiffs'],
+                                 OctomapArray, self.Receiver, 'mapDiffs')
+
+    def Receiver(self, data, parameter):
+        setattr(self.agent, parameter, data)
+    ##### Stop Local Message Aggregation #####
+
+    ##### Start Remote Message Aggregation #####
     def addNeighbor(self, nid, agent_type):
         if agent_type == 'robot':
             self.neighbors[nid] = Agent(nid, self.id, agent_type, self.reportImages)
@@ -465,7 +243,9 @@ class BOBCAT(object):
         # Pairs for direct message responses
         self.dmResp_pub[nid] = rospy.Publisher(pubDMRespTopic, DMRespArray, queue_size=1)
         self.dmResp_sub[nid] = rospy.Subscriber(subDMRespTopic, DMRespArray, self.DMResponseReceiever, nid)
+    ##### Stop Remote Message Aggregation #####
 
+    ##### Start Output Aggregation #####
     def publishMonitors(self):
         for neighbor in self.neighbors.values():
             self.monitor[neighbor.id]['status'].publish(neighbor.status)
@@ -487,20 +267,6 @@ class BOBCAT(object):
     def getStatus(self):
         return self.agent.status
 
-    def subsample(self, goal):
-        pubgoal = Goal()
-        pubgoal.pose = goal.pose
-        pubgoal.path.header.frame_id = goal.path.header.frame_id
-
-        for i, pose in enumerate(goal.path.poses):
-            if i % 20 == 0:
-                pubgoal.path.poses.append(pose)
-
-        if pubgoal.path.poses and pubgoal.path.poses[-1] != goal.path.poses[-1]:
-            pubgoal.path.poses.append(goal.path.poses[-1])
-
-        return pubgoal
-
     def buildAgentMessage(self, msg, agent):
         msg.id = agent.id
         msg.cid = agent.cid
@@ -510,7 +276,7 @@ class BOBCAT(object):
         msg.guiGoalPoint = agent.guiGoalPoint
         msg.odometry = agent.odometry
         msg.lastMessage.data = agent.lastMessage
-        msg.goal = self.subsample(agent.goal)
+        msg.goal = subsample(agent.goal)
         msg.reset = agent.reset
 
         # Need to clear any image data.  Will be overwritten by subscriber if done elswhere
@@ -529,7 +295,9 @@ class BOBCAT(object):
         else:
             msg.status = agent.status
             msg.numDiffs = agent.numDiffs
+    ##### Stop Output Aggregation #####
 
+    ##### Start Communications Handling #####
     def CommCheck(self):
         if rospy.get_rostime() < self.start_time + self.commThreshold:
             return
@@ -584,7 +352,9 @@ class BOBCAT(object):
 
     def beaconCommCheck(self, data):
         return True
+    ##### Stop Communications Handling #####
 
+    ##### Start Message Deconfliction #####
     def CommReceiver(self, data):
         # Wait until the entire sub-object is initialized before processing any data
         if not self.commListen:
@@ -644,7 +414,9 @@ class BOBCAT(object):
                 elif neighbor2.guiStamp.data > self.agent.guiStamp:
                     # Accept the GUI commands coming from a neighbor if its new and not empty
                     self.agent.guiUpdate(neighbor2)
+    ##### Stop Message Deconfliction #####
 
+    ##### Start Direct Message Handling #####
     def resetDataCheck(self, data):
         # ma_reset clears all data from the neighbor and artifacts, except map data
         # Clear removes all existing diffs, but keeps sequence the same
@@ -875,6 +647,7 @@ class BOBCAT(object):
                 # If we're missing a map but don't have anyone to request from, start over
                 self.lastDMReq = rospy.get_rostime() - self.dmWait
                 self.dmReqs = []
+    ##### Stop Direct Message Handling #####
 
     def updateBeacons(self):
         for neighbor in self.neighbors.values():
@@ -966,6 +739,7 @@ class BOBCAT(object):
             if updatedArtifacts:
                 self.artifactsUpdated = True
 
+    ##### BOBCAT Execution #####
     def run(self):
         return False
 

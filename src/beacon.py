@@ -2,7 +2,9 @@
 from __future__ import print_function
 import rospy
 from std_msgs.msg import Bool
-from BOBCAT import BOBCAT, BeaconObj
+
+from containers import BeaconObj
+from BOBCAT import BOBCAT
 
 
 class BCBeacon(BOBCAT):
