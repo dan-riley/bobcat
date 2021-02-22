@@ -14,7 +14,7 @@
   <!-- Rate to run the node at -->
   <arg name="rate" default="1" />
   <!-- Whether to republish neighbor topics for visualization or other needs -->
-  <arg name="monitor" default="false" />
+  <arg name="viz" default="false" />
   <!-- Whether to use simulated comms -->
   <arg name="simcomms" default="false" />
   <!-- Whether to run the agent solo (simulates always in comm with base) -->
@@ -85,7 +85,7 @@
     <param name="totalBeacons" value="$(arg totalBeacons)" />
     <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
     <param name="rate" value="$(arg rate)" />
-    <param name="monitor" value="$(arg monitor)" />
+    <param name="viz" value="$(arg viz)" />
     <param name="simcomms" value="$(arg simcomms)" />
     <param name="solo" value="$(arg solo)" />
     <param name="sendImages" value="$(arg sendImages)" />

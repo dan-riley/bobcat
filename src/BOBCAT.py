@@ -36,7 +36,7 @@ class BOBCAT(object):
         # Rate to run the node at
         self.rate = rospy.get_param('bobcat/rate', 1)
         # Whether to republish neighbor data for visualization or other uses
-        self.useMonitor = rospy.get_param('bobcat/monitor', False)
+        self.useViz = rospy.get_param('bobcat/viz', False)
         # Whether to use simulated comms or real comms
         self.useSimComms = rospy.get_param('bobcat/simcomms', False)
         # Whether to run the agent without a base station (comms always true)
@@ -89,7 +89,7 @@ class BOBCAT(object):
         self.simcomms = {}
         self.commcheck = {}
         self.artifacts = {}
-        self.monitor = {}
+        self.viz = {}
         self.wait = False  # Change to True to wait for Origin Detection
         self.commListen = False
         self.artifactsUpdated = False
@@ -196,27 +196,27 @@ class BOBCAT(object):
             self.comm_sub[nid] = \
                 rospy.Subscriber(comm_topic, CommsCheckArray, self.simCommChecker, nid)
 
-        # Setup topics for visualization at whichever monitors are specified (always base)
-        if agent_type == 'robot' and (self.useMonitor or self.type == 'base'):
+        # Setup topics for visualization when toggled in launch (always base)
+        if agent_type == 'robot' and (self.useViz or self.type == 'base'):
             topic = 'neighbors/' + nid + '/'
-            self.monitor[nid] = {}
-            self.monitor[nid]['status'] = \
+            self.viz[nid] = {}
+            self.viz[nid]['status'] = \
                 rospy.Publisher(topic + 'status', String, queue_size=10)
-            self.monitor[nid]['incomm'] = \
+            self.viz[nid]['incomm'] = \
                 rospy.Publisher(topic + 'incomm', Bool, queue_size=10)
-            self.monitor[nid]['odometry'] = \
+            self.viz[nid]['odometry'] = \
                 rospy.Publisher(topic + 'odometry', Odometry, queue_size=10)
-            self.monitor[nid]['goal'] = \
+            self.viz[nid]['goal'] = \
                 rospy.Publisher(topic + 'goal', PoseStamped, queue_size=10)
-            self.monitor[nid]['path'] = \
+            self.viz[nid]['path'] = \
                 rospy.Publisher(topic + 'path', Path, queue_size=10)
-            self.monitor[nid]['artifacts'] = \
+            self.viz[nid]['artifacts'] = \
                 rospy.Publisher(topic + 'artifacts', ArtifactArray, queue_size=10)
-            self.monitor[nid]['guiTaskNameReceived'] = \
+            self.viz[nid]['guiTaskNameReceived'] = \
                 rospy.Publisher(topic + 'guiTaskNameReceived', String, queue_size=10)
-            self.monitor[nid]['guiTaskValueReceived'] = \
+            self.viz[nid]['guiTaskValueReceived'] = \
                 rospy.Publisher(topic + 'guiTaskValueReceived', String, queue_size=10)
-            self.monitor[nid]['image'] = \
+            self.viz[nid]['image'] = \
                 rospy.Publisher(topic + 'image', ArtifactImg, queue_size=10, latch=True)
 
     def setupComms(self, nid):
@@ -246,22 +246,22 @@ class BOBCAT(object):
     ##### Stop Remote Message Aggregation #####
 
     ##### Start Output Aggregation #####
-    def publishMonitors(self):
+    def publishViz(self):
         for neighbor in self.neighbors.values():
-            self.monitor[neighbor.id]['status'].publish(neighbor.status)
-            self.monitor[neighbor.id]['incomm'].publish(neighbor.incomm)
-            self.monitor[neighbor.id]['guiTaskNameReceived'].publish(neighbor.guiTaskName)
-            self.monitor[neighbor.id]['guiTaskValueReceived'].publish(neighbor.guiTaskValue)
+            self.viz[neighbor.id]['status'].publish(neighbor.status)
+            self.viz[neighbor.id]['incomm'].publish(neighbor.incomm)
+            self.viz[neighbor.id]['guiTaskNameReceived'].publish(neighbor.guiTaskName)
+            self.viz[neighbor.id]['guiTaskValueReceived'].publish(neighbor.guiTaskValue)
             # Don't publish if the robot hasn't initialized odometry
             if (neighbor.odometry.pose.pose.position.x != 0 and
                 neighbor.odometry.pose.pose.position.y != 0):
-                self.monitor[neighbor.id]['odometry'].publish(neighbor.odometry)
-                self.monitor[neighbor.id]['goal'].publish(neighbor.goal.pose)
-                self.monitor[neighbor.id]['path'].publish(neighbor.goal.path)
-                self.monitor[neighbor.id]['artifacts'].publish(neighbor.checkArtifacts)
+                self.viz[neighbor.id]['odometry'].publish(neighbor.odometry)
+                self.viz[neighbor.id]['goal'].publish(neighbor.goal.pose)
+                self.viz[neighbor.id]['path'].publish(neighbor.goal.path)
+                self.viz[neighbor.id]['artifacts'].publish(neighbor.checkArtifacts)
         for artifact in self.artifacts.values():
             if artifact.image.artifact_img.data and rospy.get_rostime() - artifact.lastPublished > rospy.Duration(60) and artifact.agent_id != self.id:
-                self.monitor[artifact.agent_id]['image'].publish(artifact.image)
+                self.viz[artifact.agent_id]['image'].publish(artifact.image)
                 artifact.lastPublished = rospy.get_rostime()
 
     def getStatus(self):
@@ -298,6 +298,7 @@ class BOBCAT(object):
     ##### Stop Output Aggregation #####
 
     ##### Start Communications Handling #####
+    # Comms Monitor for all agents
     def CommCheck(self):
         if rospy.get_rostime() < self.start_time + self.commThreshold:
             return
@@ -809,8 +810,8 @@ class BOBCAT(object):
                     neighbor_diffs.clear = True
                 self.neighbor_maps_pub.publish(neighbor_diffs)
 
-            if self.useMonitor:
-                self.publishMonitors()
+            if self.useViz:
+                self.publishViz()
 
             rate.sleep()
         return

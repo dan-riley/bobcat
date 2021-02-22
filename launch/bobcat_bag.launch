@@ -8,7 +8,7 @@
   <!-- Rate to run the node at -->
   <arg name="rate" default="1" />
   <!-- Whether to republish neighbor topics for visualization or other needs -->
-  <arg name="monitor" default="false" />
+  <arg name="viz" default="false" />
   <!-- Whether to use simulated comms -->
   <arg name="simcomms" default="false" />
   <!-- Whether to run the agent solo (simulates always in comm with base) -->
@@ -64,7 +64,7 @@
     <param name="vehicle" value="$(arg vehicle)" />
     <param name="type" value="$(arg type)" />
     <param name="rate" value="$(arg rate)" />
-    <param name="monitor" value="$(arg monitor)" />
+    <param name="viz" value="$(arg viz)" />
     <param name="simcomms" value="$(arg simcomms)" />
     <param name="solo" value="$(arg solo)" />
     <param name="deconflictRadius" value="$(arg deconflictRadius)" />

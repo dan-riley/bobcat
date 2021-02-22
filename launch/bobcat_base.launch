@@ -5,7 +5,7 @@
   <include file="$(find bobcat)/launch/bobcat.launch">
     <arg name="vehicle" value="Base" />
     <arg name="type" value="base" />
-    <arg name="monitor" value="true" />
+    <arg name="viz" value="true" />
     <arg name="potentialNeighbors" value="$(arg potentialNeighbors)" />
     <arg name="useMesh" value="$(arg useMesh)" />
   </include>

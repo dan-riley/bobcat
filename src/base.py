@@ -22,8 +22,8 @@ class BCBase(BOBCAT):
     def __init__(self):
         # Get all of the parent class variables
         BOBCAT.__init__(self)
-        # Force the monitors on for Base type
-        self.useMonitor = True
+        # Force the viz on for Base type
+        self.useViz = True
         # Distance to fuse artifacts within.  May want smaller to account for missed score reports.
         self.fuseDist = rospy.get_param('bobcat/fuseDist', 3.0)
         # Storage for fused artifacts and reporting
@@ -31,13 +31,14 @@ class BCBase(BOBCAT):
         self.fused_pub = rospy.Publisher('artifact_report', Artifact, queue_size=10)
         self.score_sub = rospy.Subscriber('artifact_score', ArtifactScore, self.GetArtifactScore)
 
+        self.gui_sub = {}
         for nid in self.neighbors:
-            self.addGUIMonitor(nid)
+            self.addGUIReceivers(nid)
 
         # Listen for new robots to be added to the system
-        self.monitor['addRobot'] = rospy.Subscriber('add_robot', String, self.AddRobotReceiver)
+        self.addRobot_sub = rospy.Subscriber('add_robot', String, self.AddRobotReceiver)
 
-        self.monitor['beacons'] = rospy.Publisher('mbeacons', Marker, queue_size=10)
+        self.viz['beacons'] = rospy.Publisher('mbeacons', Marker, queue_size=10)
         self.mbeacon = Marker()
         self.mbeacon.header.frame_id = 'world'
         self.mbeacon.type = self.mbeacon.CUBE_LIST
@@ -50,23 +51,12 @@ class BCBase(BOBCAT):
         self.mbeacon.color.g = 1.0
         self.mbeacon.color.b = 1.0
 
-        self.monitor['artifacts'] = rospy.Publisher('martifacts', MarkerArray, queue_size=10)
+        self.viz['artifacts'] = rospy.Publisher('martifacts', MarkerArray, queue_size=10)
         self.martifact = MarkerArray()
 
         self.commListen = True
 
-    def addGUIMonitor(self, nid):
-        topic = 'neighbors/' + nid + '/'
-        # Monitor GUI commands to send over the network
-        self.monitor[nid]['guiTaskName'] = \
-            rospy.Subscriber(topic + 'guiTaskName', String, self.GuiTaskNameReceiver, nid)
-        self.monitor[nid]['guiTaskValue'] = \
-            rospy.Subscriber(topic + 'guiTaskValue', String, self.GuiTaskValueReceiver, nid)
-        self.monitor[nid]['guiGoalPoint'] = \
-            rospy.Subscriber(topic + 'guiGoalPoint', Pose, self.GuiGoalReceiver, nid)
-        self.monitor[nid]['guiReset'] = \
-            rospy.Subscriber(topic + 'guiReset', AgentReset, self.GuiResetReceiver, nid)
-
+    ##### Start Base Station Output Aggregation #####
     def buildArtifactMarkers(self):
         i = 0
         self.martifact.markers = []
@@ -109,20 +99,35 @@ class BCBase(BOBCAT):
         for beacon in self.beacons.values():
             if beacon.active:
                 self.mbeacon.points.append(beacon.pos)
-        self.monitor['beacons'].publish(self.mbeacon)
+        self.viz['beacons'].publish(self.mbeacon)
 
         self.buildArtifactMarkers()
-        self.monitor['artifacts'].publish(self.martifact)
+        self.viz['artifacts'].publish(self.martifact)
+    ##### End Base Station Output Aggregation #####
 
     def GetArtifactScore(self, data):
         self.fusedArtifacts[data.id].score = data.score
         self.fusedArtifacts[data.id].reported = True
 
+    ##### Start Base Station Local Message Aggregation #####
+    def addGUIReceivers(self, nid):
+        topic = 'neighbors/' + nid + '/'
+        self.gui_sub[nid] = {}
+        # Monitor GUI commands to send over the network
+        self.gui_sub[nid]['guiTaskName'] = \
+            rospy.Subscriber(topic + 'guiTaskName', String, self.GuiTaskNameReceiver, nid)
+        self.gui_sub[nid]['guiTaskValue'] = \
+            rospy.Subscriber(topic + 'guiTaskValue', String, self.GuiTaskValueReceiver, nid)
+        self.gui_sub[nid]['guiGoalPoint'] = \
+            rospy.Subscriber(topic + 'guiGoalPoint', Pose, self.GuiGoalReceiver, nid)
+        self.gui_sub[nid]['guiReset'] = \
+            rospy.Subscriber(topic + 'guiReset', AgentReset, self.GuiResetReceiver, nid)
+
     def AddRobotReceiver(self, data):
         # Add a new robot to the system, which will propogate to any other agents in comms
         if data.data not in self.neighbors:
             self.addNeighbor(data.data, 'robot')
-            self.addGUIMonitor(data.data)
+            self.addGUIReceivers(data.data)
 
     def GuiTaskNameReceiver(self, data, nid):
         self.neighbors[nid].guiStamp = rospy.get_rostime()
@@ -150,6 +155,7 @@ class BCBase(BOBCAT):
                 self.neighbors[nid].reset = data
             else:
                 self.resetDataCheck(data)
+    ##### End Base Station Local Message Aggregation #####
 
     def buildBaseArtifacts(self):
         # Set all of the current base station data
@@ -219,6 +225,7 @@ class BCBase(BOBCAT):
             if not artifact.reported:
                 self.fused_pub.publish(artifact.artifact)
 
+    ##### BOBCAT Base Station Execution #####
     def run(self):
         self.updateArtifacts()
         if self.artifactsUpdated:
