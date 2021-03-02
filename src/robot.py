@@ -1,38 +1,55 @@
 #!/usr/bin/env python
 from __future__ import print_function
-import math
 import rospy
 
-from util.helpers import getDist, getYaw, averagePosition, angleDiff
+from util.helpers import getDist
 from monitors import BCMonitors
-from behaviors import BCBehaviors
 from actions import BCActions
+import objectives, behaviors
 from BOBCAT import BOBCAT
 
 
-class BCRobot(BOBCAT, BCMonitors, BCBehaviors, BCActions):
+class BCRobot(BOBCAT, BCMonitors, BCActions):
     """ Initialize a multi-agent robot node """
 
     def __init__(self):
         # Get all of the parent class variables
         BOBCAT.__init__(self)
 
-        # Distance to maintain goal point deconfliction
-        self.deconflictRadius = rospy.get_param('bobcat/deconflictRadius', 2.5)
-        # Time stopped to report if stuck
-        self.stopCheck = rospy.get_param('bobcat/stopCheck', 30)
-
         self.startedMission = False
         self.initialPose = False
         self.history = []
         self.hislen = self.rate * 10  # How long the odometry history should be
-        self.mode = 'Explore'
-        self.stuck = 0
+        self.newStatus = False
+        self.statusCount = 0
+        self.guiBehavior = None
         self.commListen = True
 
         # Initialize all of the BOBCAT modules
         BCMonitors.__init__(self)
         BCActions.__init__(self)
+
+        # Setup Objectives
+        self.objectives = {}
+        self.objectives['explore'] = objectives.Explore(self)
+        self.objectives['report'] = objectives.ReportArtifacts(self)
+        self.objectives['input'] = objectives.Input(self)
+        self.objectives['maintainComms'] = objectives.MaintainComms(self)
+        self.objectives['extendComms'] = objectives.ExtendComms(self)
+
+        # Add the priority to specified Objectives
+        # Need to make this a launch file parameter to loop
+        self.objectives['report'].setPriority()
+        self.objectives['input'].setPriority()
+        self.objectives['extendComms'].setPriority()
+
+        # Setup Behaviors
+        self.behaviors = {}
+        self.behaviors['explore'] = behaviors.Explore(self)
+        self.behaviors['goToGoal'] = behaviors.GoToGoal(self)
+        self.behaviors['home'] = behaviors.GoHome(self)
+        self.behaviors['stop'] = behaviors.Stop(self)
+        self.behaviors['deployBeacon'] = behaviors.DeployBeacon(self)
 
     def updateHistory(self):
         # Check whether we've started the mission by moving 5 meters
@@ -47,6 +64,21 @@ class BCRobot(BOBCAT, BCMonitors, BCBehaviors, BCActions):
         if len(self.history) > self.hislen:
             self.history = self.history[-self.hislen:]
 
+    def getStatus(self):
+        # Clear out the additional status messages every so often
+        if self.statusCount > 5:
+            self.newStatus = False
+            self.statusCount = 0
+        else:
+            self.statusCount += 1
+
+        if self.newStatus:
+            status = self.agent.status + '+++' + self.newStatus
+        else:
+            status = self.agent.status
+
+        return status
+
     ##### Main BOBCAT Execution #####
     def run(self):
         # Update our comm status for anyone who needs it
@@ -55,78 +87,7 @@ class BCRobot(BOBCAT, BCMonitors, BCBehaviors, BCActions):
         # Update movement history
         self.updateHistory()
 
-        # Do status checks once we've started the mission
-        if self.startedMission and self.agent.status != 'Stop' and 'A' not in self.id:
-            if self.agent.goal.path.poses and len(self.history) == self.hislen:
-                # Check if we've been stopped if we have a goal
-                if (getDist(self.history[0].position, self.history[-1].position) < 0.5 and
-                        abs(angleDiff(math.degrees(getYaw(self.history[0].orientation)),
-                                      math.degrees(getYaw(self.history[-1].orientation)))) < 60):
-                    self.stuck += 1
-                    # Add the current goal to potential blacklist points
-                    self.blgoals.append(self.agent.goal.pose.pose.position)
-                else:
-                    self.stuck = 0
-                    self.blgoals = []
-
-                # If stuck, report and append to blacklist so we don't try to go here again
-                if self.stuck >= self.stopCheck:
-                    # Only add to the blacklist at the stopCheck intervals,
-                    # or else they get added too often
-                    if self.stuck % self.stopCheck == 0:
-                        # Get the average goal position
-                        avgGoal = averagePosition(self.blgoals)
-                        # Remove outliers
-                        newgoals = []
-                        for goal in self.blgoals:
-                            if getDist(goal, avgGoal) < self.deconflictRadius * 2:
-                                newgoals.append(goal)
-
-                        # Get the new average goal position, and only if there are enough
-                        if len(newgoals) > self.hislen / 2:
-                            avgGoal = averagePosition(newgoals)
-
-                            # Make sure it's not the origin
-                            if not (avgGoal.x == 0 and avgGoal.y == 0 and avgGoal.z == 0):
-                                self.addBlacklist(avgGoal)
-                                self.blgoals = []
-
-                    self.updateStatus('Stuck')
-                    rospy.loginfo(self.id + ' has not moved!')
-
-            elif not self.agent.goal.path.poses:
-                # Report no path available
-                self.updateStatus('No Path')
-                # rospy.loginfo(self.id + ' no path!')
-
-        checkBeacon = True
-        # Manage the newest task sent
-        if self.agent.guiAccept:
-            if self.agent.guiTaskName == 'task':
-                if self.agent.guiTaskValue == 'Explore' or self.agent.guiTaskValue == 'Start':
-                    self.mode = 'Explore'
-                elif self.agent.guiTaskValue == 'Home':
-                    self.mode = 'Home'
-                elif self.agent.guiTaskValue == 'Stop':
-                    self.mode = 'Stop'
-                elif self.agent.guiTaskValue == 'Goal':
-                    self.mode = 'Goal'
-                elif self.agent.guiTaskValue == 'Deploy':
-                    self.deployBeacon(True, 'GUI Command')
-                    checkBeacon = False
-                    self.mode = 'Explore'
-
-                # Disable the estop.  'Stop' will re-enable it
-                self.stop_pub.publish(True)
-            else:
-                self.publishGUITask()
-
-            self.agent.guiAccept = False
-
-        # Check whether to drop a beacon, as long as we weren't commanded by the GUI
-        if checkBeacon:
-            self.beaconCheck()
-
+        ### Start Message Aggregation ###
         num_neighbors = 0
         # Time check for "current" neighbors.  Make sure we don't have negative time.
         if rospy.get_rostime() > rospy.Time(0) + self.commThreshold * 30:
@@ -149,73 +110,37 @@ class BCRobot(BOBCAT, BCMonitors, BCBehaviors, BCActions):
 
         # Make sure our internal artifact list is up to date, and if we need to report
         self.artifactCheck(self.agent)
-        self.artifactCheckReport()
+        ### End Message Aggregation ###
 
-        # Decide which goal to go to based on status in this precedence:
-        # Report Artifacts
-        # GUI Return Home
-        # GUI Stop
-        # GUI Goal Point
-        # Explore
-        if self.report:
-            # Once we see the base has our latest artifact report we can stop going home
-            if self.solo or self.base.lastArtifact == self.agent.lastArtifact:
-                # Turn off reporting
-                self.report = False
-                for artifact in self.artifacts.values():
-                    artifact.reported = True
+        ### Start Monitor updates ###
+        if self.startedMission and self.agent.status != 'Stop' and 'A' not in self.id:
+            self.StuckMonitor()
+        self.BeaconMonitor()
+        if self.reverseDropEnable:
+            self.ReverseDropMonitor()
+        self.ArtifactMonitor()
+        self.GUIMonitor()
+        ### End Monitor updates ###
 
-                # Resume normal operation (check mode or explore)
-                rospy.loginfo(self.id + ' resuming operation...')
-            else:
-                if self.agent.status != 'Report':
-                    rospy.loginfo(self.id + ' return to report...')
-                self.setGoalPoint('Report')
-                # Don't check for other mode when in report
-                return True
+        # Update Objective Weights
+        for objective in self.objectives.values():
+            objective.evaluate()
 
-        # Check for a mode from GUI or MA, or explore normally
-        if self.mode == 'Home':
-            self.setGoalPoint('Home')
-        elif self.mode == 'Stop':
-            self.stop()
-        elif self.mode == 'Deploy':
-            rospy.loginfo(self.id + ' reverse deploy mode')
-            if self.base.incomm:
-                # Wait for a solid connection before dropping
-                if self.regainBase > 5:
-                    # Make sure there's no beacons already in the area
-                    pose = self.agent.odometry.pose.pose
-                    checkDist = self.junctionDist
-                    dropBeacon = True
-                    dropBeacon, nB, nDB = self.beaconDistCheck(pose, checkDist, dropBeacon)
-                    if dropBeacon:
-                        self.deployBeacon(True, 'Regain comms')
-                    else:
-                        # The bl_beacons should prevent this from occuring too many times
-                        rospy.loginfo(self.id + ' beacon too close, cancelling drop')
-                    self.mode = 'Explore'
-                    self.regainBase = 0
-                else:
-                    self.regainBase += 1
-            else:
-                self.regainBase = 0
-                self.updateStatus('Regain comms deploy')
-                self.setGoalPoint('Home')
-        elif self.mode == 'Goal':
-            if (getDist(self.agent.odometry.pose.pose.position,
-                        self.agent.guiGoalPoint.pose.position) < 1.0):
-                rospy.loginfo(self.id + ' resuming exploration...')
-                self.mode = 'Explore'
-                # May want to add other options for tasks when it reaches the goal
-                self.deconflictExplore()
-            else:
-                if self.agent.status != 'guiCommand':
-                    rospy.loginfo(self.id + ' setting GUI Goal Point...')
-                self.setGoalPoint('guiCommand')
-        else:
-            # Normal exploration with coordination
-            self.deconflictExplore()
+        # Update Behavior Scores and find the highest one
+        maxScore = 0
+        execBehavior = None
+        for behavior in self.behaviors.values():
+            behavior.evaluate()
+            if behavior.score > maxScore:
+                maxScore = behavior.score
+                execBehavior = behavior
+            elif behavior.score == maxScore:
+                if execBehavior:
+                    print("we have a tie!", behavior.name, execBehavior.name)
+
+        # Execute the chosen Behavior
+        print('executing', execBehavior.name)
+        execBehavior.execute()
 
         # Have the aerial robots prevent maps from being merged until they're airborne
         # Useful particularly for marsupials
