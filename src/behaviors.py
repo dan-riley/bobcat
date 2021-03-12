@@ -23,7 +23,6 @@ class DefaultBehavior():
     """ Default Behavior object to extend for others """
 
     def __init__(self, agent):
-        print("default behavior initializing")
         self.a = agent
         self.score = 0
         self.name = 'Default'
@@ -32,7 +31,6 @@ class DefaultBehavior():
         return True
 
     def execute(self):
-        print(self.score)
         self.score += 1
 
         return True
@@ -192,6 +190,7 @@ class GoToGoal(DefaultBehavior):
             self.score = self.a.objectives['input'].weight
 
     def execute(self):
+        # This part should probably be in a Monitor instead
         if (getDist(self.a.agent.odometry.pose.pose.position,
                     self.a.agent.guiGoalPoint.pose.position) < 1.0):
             rospy.loginfo(self.a.id + ' resuming exploration...')

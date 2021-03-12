@@ -24,24 +24,23 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         self.statusCount = 0
         self.guiBehavior = None
         self.commListen = True
+        self.debugWeights = False
+        self.lastBehavior = None
 
         # Initialize all of the BOBCAT modules
         BCMonitors.__init__(self)
         BCActions.__init__(self)
 
         # Setup Objectives
+        # Number of priority levels (same as lowest priority number)
+        # Need to make this, and the arguments to the objectives, launch file parameters
+        self.numPriorities = 3
         self.objectives = {}
-        self.objectives['explore'] = objectives.Explore(self)
-        self.objectives['report'] = objectives.ReportArtifacts(self)
-        self.objectives['input'] = objectives.Input(self)
-        self.objectives['maintainComms'] = objectives.MaintainComms(self)
-        self.objectives['extendComms'] = objectives.ExtendComms(self)
-
-        # Add the priority to specified Objectives
-        # Need to make this a launch file parameter to loop
-        self.objectives['report'].setPriority()
-        self.objectives['input'].setPriority()
-        self.objectives['extendComms'].setPriority()
+        self.objectives['explore'] = objectives.Explore(self, 2)
+        self.objectives['report'] = objectives.ReportArtifacts(self, 1)
+        self.objectives['input'] = objectives.Input(self, 1)
+        self.objectives['maintainComms'] = objectives.MaintainComms(self, 3)
+        self.objectives['extendComms'] = objectives.ExtendComms(self, 1)
 
         # Setup Behaviors
         self.behaviors = {}
@@ -79,6 +78,27 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
 
         return status
 
+    def delayAerialMaps(self):
+        # Have the aerial robots prevent maps from being merged until they're airborne
+        # Useful particularly for marsupials
+        # May consider using seqs to clear instead, as 'ignore' will cause the entire map
+        # to get transmitted once the robot launches, but seqs means it was transmitted and
+        # then thrown away...not sure best approach
+        if not self.launch_status and not self.agent.reset.ignore:
+            rospy.loginfo('ignore aerial maps until launched')
+            self.agent.reset.stamp = rospy.get_rostime()
+            self.agent.reset.agent = self.id
+            self.agent.reset.ignore = True
+            self.agent.reset.robots = True
+            self.agent.guiStamp = self.agent.reset.stamp
+        elif self.launch_status and self.agent.reset.ignore:
+            rospy.loginfo('aerial robot launched, stop ignoring maps')
+            self.agent.reset.agent = self.id
+            self.agent.reset.ignore = False
+            self.agent.reset.robots = True
+            self.agent.reset.stamp = rospy.get_rostime()
+            self.agent.guiStamp = self.agent.reset.stamp
+
     ##### Main BOBCAT Execution #####
     def run(self):
         # Update our comm status for anyone who needs it
@@ -110,6 +130,11 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
 
         # Make sure our internal artifact list is up to date, and if we need to report
         self.artifactCheck(self.agent)
+
+        # Wait until controller is enabled on air vehicle so maps don't transmit
+        if self.isAerial:
+            self.delayAerialMaps()
+
         ### End Message Aggregation ###
 
         ### Start Monitor updates ###
@@ -123,43 +148,41 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         ### End Monitor updates ###
 
         # Update Objective Weights
+        if self.debugWeights:
+            rospy.loginfo('')
+            rospy.loginfo('Objectives:')
         for objective in self.objectives.values():
             objective.evaluate()
+            if self.debugWeights:
+                rospy.loginfo(str(objective.__class__) + ' ' + str(objective.weight))
 
         # Update Behavior Scores and find the highest one
         maxScore = 0
         execBehavior = None
+        if self.debugWeights:
+            rospy.loginfo('')
+            rospy.loginfo('Behaviors:')
         for behavior in self.behaviors.values():
             behavior.evaluate()
             if behavior.score > maxScore:
                 maxScore = behavior.score
                 execBehavior = behavior
             elif behavior.score == maxScore:
-                if execBehavior:
-                    print("we have a tie!", behavior.name, execBehavior.name)
+                if execBehavior and self.lastBehavior:
+                    if behavior == self.lastBehavior:
+                        execBehavior = behavior
+                        print("tie, executing last behavior!")
+                    else:
+                        print("we have a tie!", behavior.name, execBehavior.name, self.lastBehavior.name)
+
+            if self.debugWeights:
+                rospy.loginfo(behavior.name + ' ' + str(behavior.score))
 
         # Execute the chosen Behavior
-        print('executing', execBehavior.name)
+        if self.debugWeights:
+            rospy.loginfo('')
+            rospy.loginfo('executing ' + execBehavior.name)
+        self.lastBehavior = execBehavior
         execBehavior.execute()
-
-        # Have the aerial robots prevent maps from being merged until they're airborne
-        # Useful particularly for marsupials
-        # May consider using seqs to clear instead, as 'ignore' will cause the entire map
-        # to get transmitted once the robot launches, but seqs means it was transmitted and
-        # then thrown away...not sure best approach
-        if self.isAerial and not self.launch_status and not self.agent.reset.ignore:
-            rospy.loginfo('ignore aerial maps until launched')
-            self.agent.reset.stamp = rospy.get_rostime()
-            self.agent.reset.agent = self.id
-            self.agent.reset.ignore = True
-            self.agent.reset.robots = True
-            self.agent.guiStamp = self.agent.reset.stamp
-        elif self.isAerial and self.launch_status and self.agent.reset.ignore:
-            rospy.loginfo('aerial robot launched, stop ignoring maps')
-            self.agent.reset.agent = self.id
-            self.agent.reset.ignore = False
-            self.agent.reset.robots = True
-            self.agent.reset.stamp = rospy.get_rostime()
-            self.agent.guiStamp = self.agent.reset.stamp
 
         return True

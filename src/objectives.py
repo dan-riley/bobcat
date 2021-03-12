@@ -6,23 +6,36 @@ import rospy
 class DefaultObjective():
     """ Default Objective object to extend for others """
 
-    def __init__(self, agent):
+    def __init__(self, agent, priority):
         self.a = agent
-        # Weight for this objective.  Usually 1 for simple objectives.
-        self.initialWeight = 1
-        self.weight = self.initialWeight
-        # Priority flag for objectives deemed important to mission success.
-        # Enabling using setPriority doubles the multiplier
-        self.priority = False
-        self.multiplier = 1
+        self.priority = priority
+        # Start our calculated weight at 0
+        self.weight = 0
+        # Set our baseline weight based on the priority level given
+        # Alternatively, simply set self.initialWeight = priority (where priority is the weight)
+        self.setInitialWeight()
 
-    def setPriority(self):
-        self.priority = True
-        self.multiplier = 2
+    def setInitialWeight(self):
+        # Set the range/boost used for weight calculations.  0.4/0.5 gives a range of 0.6 - 1.9.
+        # Presets make ties difficult, and for highest priority objectives to always be fulfilled
+        ranges = 0.4
+        boost = 0.5
+
+        if self.a.numPriorities == 1:
+            # Equal weight objectives
+            self.initialWeight = 1
+        else:
+            # Mid-point of priorities where weight == 1
+            mid = (self.a.numPriorities - 1) / 2
+            # Normalize the given priorities around 1
+            self.initialWeight = ((self.priority - 1 - mid) / mid) * (-ranges) + 1
+            # Add additional weight to "higher than average" priorities
+            if self.initialWeight > 1:
+                self.initialWeight += boost
 
     def setWeight(self, weight = None):
         if weight is None:
-            self.weight = self.initialWeight * self.multiplier
+            self.weight = self.initialWeight
         else:
             self.weight = weight
 
@@ -51,10 +64,6 @@ class Input(DefaultObjective):
 
 
 class MaintainComms(DefaultObjective):
-
-    def __init__(self, agent):
-        DefaultObjective.__init__(self, agent)
-        self.initialWeight = 0.7
 
     def evaluate(self):
         self.setWeight(0)
