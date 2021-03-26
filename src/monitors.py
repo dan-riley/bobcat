@@ -126,10 +126,10 @@ class BCMonitors():
 
         # If we've regained comms and were trying to reverse drop, check if we can
         if self.reverseDrop and self.base.incomm:
+            pose = self.agent.odometry.pose.pose
+            checkDist = self.junctionDist
             if self.regainBase > 5:
                 # Make sure there's no beacons already in the area
-                pose = self.agent.odometry.pose.pose
-                checkDist = self.junctionDist
                 dropBeacon = True
                 dropBeacon, nB, nDB = self.beaconDistCheck(pose, checkDist, dropBeacon)
                 if dropBeacon:
@@ -141,7 +141,21 @@ class BCMonitors():
                 self.regainBase = 0
                 self.reverseDrop = False
             else:
-                self.regainBase += 1
+                anchorDist = getDist(pose.position, self.anchorPos)
+                if anchorDist > 10:
+                    self.regainBase += 1
+                else:
+                    # If we're close to anchor, comms must just be too bad to keep trying to drop
+                    # Drop one anyway if there's not already one nearby just in case it helps
+                    dropBeacon = True
+                    dropBeacon, nB, nDB = self.beaconDistCheck(pose, checkDist, dropBeacon)
+                    if dropBeacon:
+                        self.dropReason = 'Near anchor'
+                        self.deployBeacon = True
+                    else:
+                        rospy.loginfo(self.id + ' anchor too close, cancelling drop')
+                    self.regainBase = 0
+                    self.reverseDrop = False
         else:
             self.regainBase = 0
 
@@ -214,6 +228,7 @@ class BCMonitors():
             for artifact in self.artifacts.values():
                 if artifact.agent_id == self.id and not artifact.reported:
                     self.report = True
+                    self.agent.updateHash()
                     break
 
         # Identify our report so we can track that the base station has seen it
@@ -228,6 +243,8 @@ class BCMonitors():
 
                 # Resume normal operation
                 rospy.loginfo(self.id + ' resuming operation...')
+            elif self.base.incomm and self.base.lastArtifact != self.agent.lastArtifact:
+                self.agent.updateHash()
 
     def StuckMonitor(self):
         if self.agent.goal.path.poses and len(self.history) == self.hislen:
