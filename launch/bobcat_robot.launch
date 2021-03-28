@@ -5,6 +5,7 @@
   <arg name="turnDetect" default="true" />
   <arg name="delayDrop" default="false" />
   <arg name="reverseDrop" default="true" />
+  <arg name="mappingRange" default="5.0" />
 
   <include file="$(find bobcat)/launch/bobcat.launch">
     <arg name="vehicle" value="$(arg vehicle)" />
@@ -13,5 +14,6 @@
     <arg name="turnDetect" value="$(arg turnDetect)" />
     <arg name="delayDrop" value="$(arg delayDrop)" />
     <arg name="reverseDrop" value="$(arg reverseDrop)" />
+    <arg name="mappingRange" value="$(arg mappingRange)" />
   </include>
 </launch>

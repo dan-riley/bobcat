@@ -116,7 +116,7 @@ class DeployBeacon(DefaultBehavior):
                 # Resume the mission
                 if self.a.guiBehavior == 'deployBeacon':
                     self.a.guiBehavior = None
-                self.a.stop_pub.publish(True)
+                self.a.move()
                 self.a.behaviors['explore'].execute()
                 self.a.deploy_pub.publish(False)
 

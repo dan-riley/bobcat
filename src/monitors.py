@@ -19,6 +19,8 @@ class BCMonitors():
         self.deconflictRadius = rospy.get_param('bobcat/deconflictRadius', 2.5)
         # Time stopped to report if stuck
         self.stopCheck = rospy.get_param('bobcat/stopCheck', 30)
+        # Mapping range, to decide what "long distance goals" are
+        self.mappingRange = rospy.get_param('bobcat/mappingRange', 5.0)
         # Distance from Anchor to drop beacons automatically
         self.maxAnchorDist = rospy.get_param('bobcat/anchorDropDist', 100)
         # Distance to drop beacons automatically
@@ -306,9 +308,10 @@ class BCMonitors():
                     self.guiBehavior = 'deployBeacon'
                     self.dropReason = 'GUI Command'
 
-                # Disable the estop.  'Stop' will re-enable it
+                # Make sure the robot is enabled unless it was told to stop
                 # Need to confirm this is still needed
-                self.stop_pub.publish(True)
+                if self.guiBehavior != 'stop':
+                    self.move()
             else:
                 # Publish a boolean to the given topic for direct control
                 # Shouldn't really be in a Monitor but for now the best place for it

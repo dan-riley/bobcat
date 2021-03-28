@@ -22,10 +22,11 @@ class BCActions():
 
         # Topics for publishers
         homeTopic = rospy.get_param('bobcat/homeTopic', 'report_artifact')
-        stopTopic = rospy.get_param('bobcat/stopTopic', 'nearness_controller/enable_control')
+        stopTopic = rospy.get_param('bobcat/stopTopic', 'estop')
         baseCommTopic = rospy.get_param('bobcat/baseCommTopic', 'base_comm')
         goalTopic = rospy.get_param('bobcat/goalTopic', 'ma_goal')
         pathTopic = rospy.get_param('bobcat/pathTopic', 'ma_goal_path')
+        self.stopCommand = rospy.get_param('bobcat/stopCommand', True)
 
         self.task_pub = rospy.Publisher('task', String, queue_size=10)
         self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
@@ -99,9 +100,8 @@ class BCActions():
         curgoal = self.agent.goal.pose.pose.position
         curpos = self.agent.odometry.pose.pose.position
         # Keep going to long distance goal, unless it's home, or we get a new potential goal close
-        # TODO make these ranges based off of sensor range in launch file
-        if (getDist(curpos, self.agent.exploreGoal.pose.position) > 5.0 and
-                getDist(curpos, curgoal) > 7.0 and
+        if (getDist(curpos, self.agent.exploreGoal.pose.position) > self.mappingRange and
+                getDist(curpos, curgoal) > self.mappingRange + 2.0 and
                 not (curgoal.x == 0 and curgoal.y == 0 and curgoal.z == 0)):
 
             # Make sure this goal isn't blacklisted, which could happen after it was chosen
@@ -207,11 +207,17 @@ class BCActions():
                 rospy.loginfo(self.id + ' only goal is blacklisted, using trajectory follower')
                 self.useTraj = True
 
+    def move(self):
+        # Start movement control, usually after a stop
+        self.agent.status = 'Moving'
+        self.task_pub.publish(self.agent.status)
+        self.stop_pub.publish(not self.stopCommand)
+
     def stop(self):
         # Stop the robot by publishing no path, but don't change the displayed goal
         self.agent.status = 'Stop'
         self.task_pub.publish(self.agent.status)
-        self.stop_pub.publish(False)
+        self.stop_pub.publish(self.stopCommand)
 
         if self.stopStart and self.useSimComms:
             rospy.loginfo(self.id + ' stopping')
