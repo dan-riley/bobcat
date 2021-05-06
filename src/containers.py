@@ -34,6 +34,10 @@ class Agent(object):
         self.initialize()
         self.initializeMaps()
 
+        # Initialize our empty path so guidance controller can ignore it
+        if (self.id == self.pid):
+            self.explorePath.header.frame_id = 'starting'
+
     def initialize(self, resetTime=rospy.Time()):
         self.status = ''
         self.guiStamp = rospy.get_rostime()

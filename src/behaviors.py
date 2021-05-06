@@ -175,7 +175,8 @@ class Explore(DefaultBehavior):
 
         # Publish the selected goal and path for the guidance controller
         self.a.goal_pub.publish(self.a.agent.goal.pose)
-        self.a.path_pub.publish(self.a.agent.goal.path)
+        if self.a.agent.goal.path.header.frame_id != 'starting':
+            self.a.path_pub.publish(self.a.agent.goal.path)
 
 
 class GoToGoal(DefaultBehavior):
