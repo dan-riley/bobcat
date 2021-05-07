@@ -56,7 +56,7 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
             self.initialPose = self.agent.odometry.pose.pose
         elif not self.startedMission:
             # Do this here so we only do this calculation until leaving the starting area
-            if getDist(self.agent.odometry.pose.pose.position, self.initialPose.position) > 5:
+            if getDist(self.agent.odometry.pose.pose.position, self.initialPose.position) > 1:
                 self.startedMission = True
 
         self.history.append(self.agent.odometry.pose.pose)
@@ -138,7 +138,7 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         ### End Message Aggregation ###
 
         ### Start Monitor updates ###
-        if self.startedMission and self.agent.status != 'Stop' and 'A' not in self.id:
+        if self.startedMission and self.agent.status != 'Stop':
             self.StuckMonitor()
         self.BeaconMonitor()
         if self.reverseDropEnable:

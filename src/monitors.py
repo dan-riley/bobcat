@@ -286,6 +286,9 @@ class BCMonitors():
                             self.addBlacklist(avgGoal)
                             self.blgoals = []
 
+                    # Tell the planner to replan
+                    self.task_pub.publish('unstuck')
+
                 self.updateStatus('Stuck')
                 rospy.loginfo(self.id + ' has not moved!')
 
