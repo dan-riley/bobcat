@@ -96,6 +96,9 @@ class BCMonitors():
         return dropBeacon, numBeacons, numDistBeacons
 
     def ReverseDropMonitor(self):
+        if not self.numBeacons:
+            return
+
         # Reset the ability to check for reverse drop if we ever regain comms
         if self.base.incomm:
             self.checkReverse = True
