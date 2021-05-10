@@ -58,6 +58,8 @@ class BOBCAT(object):
         # Beacons this robot is carrying
         self.myBeacons = rospy.get_param('bobcat/myBeacons', '').split(',')
         self.numBeacons = len(self.myBeacons) if self.myBeacons[0] != '' else 0
+        # Whether to subsample paths or not, if the planner uses high density paths
+        self.subsamplePaths = rospy.get_param('bobcat/subsample', False)
         # Topics for publishers
         self.pubTopic = rospy.get_param('bobcat/pubTopic', 'ma_data')
         self.commTopic = rospy.get_param('bobcat/commTopic', 'mesh_comm')
@@ -276,7 +278,7 @@ class BOBCAT(object):
         msg.guiGoalPoint = agent.guiGoalPoint
         msg.odometry = agent.odometry
         msg.lastMessage.data = agent.lastMessage
-        msg.goal = subsample(agent.goal)
+        msg.goal = subsample(agent.goal) if self.subsamplePaths else agent.goal
         msg.reset = agent.reset
 
         # Need to clear any image data.  Will be overwritten by subscriber if done elswhere
