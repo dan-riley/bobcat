@@ -178,6 +178,12 @@ class BOBCAT(object):
 
     def Receiver(self, data, parameter):
         setattr(self.agent, parameter, data)
+
+        # If we're not receiving a goal, set the end of the path as the goal
+        if parameter == 'explorePath' and data.poses:
+            if data.poses[-1].pose.position != self.agent.exploreGoal.pose.position:
+                self.agent.exploreGoal = data.poses[-1]
+
     ##### Stop Local Message Aggregation #####
 
     ##### Start Remote Message Aggregation #####

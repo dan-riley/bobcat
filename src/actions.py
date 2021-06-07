@@ -203,6 +203,7 @@ class BCActions():
             else:
                 pathend = goal
 
+            self.useTraj = False
             if not self.checkBlacklist(goal) or not self.checkBlacklist(pathend):
                 rospy.loginfo(self.id + ' only goal is blacklisted, using trajectory follower')
                 self.useTraj = True
@@ -254,6 +255,8 @@ class BCActions():
 
         if not self.planner_status and reason != 'guiCommand':
             self.traj_pub.publish(True)
+            # Try to get the planner to replan
+            self.task_pub.publish('eop')
             self.updateStatus('Following Trajectory')
             rospy.loginfo(self.id + ' using trajectory follower for home')
         else:

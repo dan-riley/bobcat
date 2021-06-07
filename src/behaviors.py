@@ -158,6 +158,8 @@ class Explore(DefaultBehavior):
                 getDist(self.a.agent.goal.pose.pose.position,
                         self.a.agent.odometry.pose.pose.position) < 1.0)):
             self.a.traj_pub.publish(True)
+            # Try to get the planner to replan
+            self.a.task_pub.publish('eop')
             self.a.updateStatus('Following Trajectory')
             rospy.loginfo(self.a.id + ' using trajectory follower during explore')
             # Stop using the old goal and path or else we'll get stuck in a loop
