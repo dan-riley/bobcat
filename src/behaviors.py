@@ -146,9 +146,17 @@ class Explore(DefaultBehavior):
     def execute(self):
         # Explore with goal deconfliction
         self.a.stopStart = True
-        self.a.agent.status = 'Explore'
-        self.a.home_pub.publish(False)
-        self.a.task_pub.publish(self.a.agent.status)
+        # If a replan was requested somewhere, trigger it
+        if self.a.replan:
+            self.a.updateStatus('Replanning')
+            rospy.loginfo(self.a.id + ' requesting replan')
+            self.a.task_pub.publish('eop')
+            self.a.replan = False
+        # Reduce all the redundant explore messages
+        if self.a.agent.status != 'Explore':
+            self.a.agent.status = 'Explore'
+            self.a.home_pub.publish(False)
+            self.a.task_pub.publish(self.a.agent.status)
         # Find the best goal point to go to
         self.a.deconflictGoals()
 

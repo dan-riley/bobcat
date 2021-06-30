@@ -28,7 +28,7 @@ class BCActions():
         pathTopic = rospy.get_param('bobcat/pathTopic', 'ma_goal_path')
         self.stopCommand = rospy.get_param('bobcat/stopCommand', True)
 
-        self.task_pub = rospy.Publisher('task', String, queue_size=10)
+        self.task_pub = rospy.Publisher('task', String, queue_size=10, latch=True)
         self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
         self.deploy_breadcrumb_pub = rospy.Publisher('breadcrumb/deploy', Empty, queue_size=10)
         self.reset_pub = rospy.Publisher('reset_artifacts', Bool, queue_size=10)

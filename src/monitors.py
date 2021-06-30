@@ -49,6 +49,7 @@ class BCMonitors():
         self.stuck = 0
 
         # Monitor outputs
+        self.replan = False
         self.report = False
         self.deployBeacon = False
         self.reverseDrop = False
@@ -268,7 +269,11 @@ class BCMonitors():
             if self.stuck >= self.stopCheck:
                 # Only add to the blacklist at the stopCheck intervals,
                 # or else they get added too often
-                if self.stuck % self.stopCheck == 0:
+
+                # If in GUI Goal, just exit back to explore
+                if self.guiBehavior == 'goToGoal':
+                    self.guiBehavior = None
+                elif self.stuck % self.stopCheck == 0:
                     # Get the average goal position
                     avgGoal = averagePosition(self.blgoals)
                     # Remove outliers
@@ -281,12 +286,14 @@ class BCMonitors():
                     if len(newgoals) > self.hislen / 2:
                         avgGoal = averagePosition(newgoals)
 
-                        # Make sure it's not the origin
-                        if not (avgGoal.x == 0 and avgGoal.y == 0 and avgGoal.z == 0):
+                        # Make sure it's not the origin and we're not already close to the goal
+                        if (not (avgGoal.x == 0 and avgGoal.y == 0 and avgGoal.z == 0) and
+                                getDist(self.agent.odometry.pose.pose.position,
+                                        self.agent.goal.pose.pose.position) > 0.5):
                             self.addBlacklist(avgGoal)
                             self.blgoals = []
 
-                    # Tell the planner to replan
+                    # Tell the planner to replan and blacklist
                     self.task_pub.publish('unstuck')
 
                 self.updateStatus('Stuck')
@@ -301,6 +308,9 @@ class BCMonitors():
         if self.agent.guiAccept:
             if self.agent.guiTaskName == 'task':
                 if self.agent.guiTaskValue == 'Explore' or self.agent.guiTaskValue == 'Start':
+                    # Request a new goal from the planner if we were already exploring
+                    if self.guiBehavior == None:
+                        self.replan = True
                     # Since Explore is the default behavior, these commands just reset the
                     # robot to normal autonomous mode
                     self.guiBehavior = None
