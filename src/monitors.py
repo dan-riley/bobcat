@@ -59,13 +59,26 @@ class BCMonitors():
 
         # Subscribers for some Monitors
         waitTopic = rospy.get_param('bobcat/waitTopic', 'origin_detection_status')
+        stopTopic = rospy.get_param('bobcat/stopTopic', 'estop')
         self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
+        self.stop_sub = rospy.Subscriber(stopTopic, Bool, self.StopMonitor)
         self.planner_sub = rospy.Subscriber('planner_status', Bool, self.PlannerMonitor)
         self.launch_sub = rospy.Subscriber('velocity_controller/enable', Bool, self.LaunchMonitor)
 
     def WaitMonitor(self, data):
         if data.status > 0:
             self.wait = False
+
+    def StopMonitor(self, data):
+        # This technically monitors the estop whether sent from Bobcat or externally,
+        # but the main point is to capture joystick commands to stop the robot
+        if data.data and self.stopCommand:
+            if self.guiBehavior != 'stop':
+                self.lastGuiBehavior = self.guiBehavior
+                self.guiBehavior = 'stop'
+        elif self.guiBehavior == 'stop':
+            # If we were stopped, we should go back to whatever the last thing requested was
+            self.guiBehavior = self.lastGuiBehavior
 
     def PlannerMonitor(self, data):
         self.planner_status = data.data
@@ -306,6 +319,7 @@ class BCMonitors():
     def GUIMonitor(self):
         # Manage the newest task sent
         if self.agent.guiAccept:
+            self.lastGuiBehavior = self.guiBehavior
             if self.agent.guiTaskName == 'task':
                 if self.agent.guiTaskValue == 'Explore' or self.agent.guiTaskValue == 'Start':
                     # Request a new goal from the planner if we were already exploring

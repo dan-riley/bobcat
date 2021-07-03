@@ -216,9 +216,10 @@ class BCActions():
 
     def stop(self):
         # Stop the robot by publishing no path, but don't change the displayed goal
-        self.agent.status = 'Stop'
-        self.task_pub.publish(self.agent.status)
-        self.stop_pub.publish(self.stopCommand)
+        if self.agent.status != 'Stop':
+            self.agent.status = 'Stop'
+            self.task_pub.publish(self.agent.status)
+            self.stop_pub.publish(self.stopCommand)
 
         if self.stopStart and self.useSimComms:
             rospy.loginfo(self.id + ' stopping')

@@ -58,6 +58,7 @@ class BOBCAT(object):
         # Beacons this robot is carrying
         self.myBeacons = rospy.get_param('bobcat/myBeacons', '').split(',')
         self.numBeacons = len(self.myBeacons) if self.myBeacons[0] != '' else 0
+        self.smartBeacons = rospy.get_param('bobcat/smartBeacons', True)
         # Whether to subsample paths or not, if the planner uses high density paths
         self.subsamplePaths = rospy.get_param('bobcat/subsample', False)
         # Topics for publishers
@@ -195,8 +196,8 @@ class BOBCAT(object):
             owner = True if nid in self.myBeacons else False
             self.beacons[nid] = BeaconObj(nid, owner)
 
-        # Beacons don't run a node in virtual, so don't setup comms
-        if agent_type != 'beacon' or (agent_type == 'beacon' and not self.useVirtual):
+        # Only setup comms with beacons if smart beacons enabled
+        if agent_type != 'beacon' or (agent_type == 'beacon' and self.smartBeacons):
             self.setupComms(nid)
 
         if self.useSimComms:
