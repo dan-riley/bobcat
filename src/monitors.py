@@ -47,6 +47,7 @@ class BCMonitors():
         self.dropReason = ''
         self.checkReverse = True
         self.stuck = 0
+        self.ignoreStopCommand = True
 
         # Monitor outputs
         self.replan = False
@@ -56,12 +57,14 @@ class BCMonitors():
         self.planner_status = True
         self.launch_status = True
         self.isAerial = False
+        self.blacklistUpdated = False
 
         # Subscribers for some Monitors
         waitTopic = rospy.get_param('bobcat/waitTopic', 'origin_detection_status')
         stopTopic = rospy.get_param('bobcat/stopTopic', 'estop')
         self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
         self.stop_sub = rospy.Subscriber(stopTopic, Bool, self.StopMonitor)
+        self.estop_sub = rospy.Subscriber('estop_cmd', Bool, self.EStopMonitor)
         self.planner_sub = rospy.Subscriber('planner_status', Bool, self.PlannerMonitor)
         self.launch_sub = rospy.Subscriber('velocity_controller/enable', Bool, self.LaunchMonitor)
 
@@ -70,6 +73,13 @@ class BCMonitors():
             self.wait = False
 
     def StopMonitor(self, data):
+        # Ignore any commands if inhibited, which node is at startup
+        if self.ignoreStopCommand:
+            if self.startedMission:
+                # Only reset the ignore once the mission has started
+                self.ignoreStopCommand = False
+            return
+
         # This technically monitors the estop whether sent from Bobcat or externally,
         # but the main point is to capture joystick commands to stop the robot
         if data.data and self.stopCommand:
@@ -79,6 +89,14 @@ class BCMonitors():
         elif self.guiBehavior == 'stop':
             # If we were stopped, we should go back to whatever the last thing requested was
             self.guiBehavior = self.lastGuiBehavior
+        elif self.guiBehavior == None:
+            # If we get an enable, but we're not already stopped and exploring, replan
+            self.replan = True
+
+    def EStopMonitor(self, data):
+        if not self.ignoreStopCommand:
+            # Republish any hardware estop commands to the software estop so they match
+            self.stop_pub.publish(data.data and self.stopCommand)
 
     def PlannerMonitor(self, data):
         self.planner_status = data.data
@@ -266,6 +284,7 @@ class BCMonitors():
                 self.agent.updateHash()
 
     def StuckMonitor(self):
+        self.blacklistUpdated = False
         if self.agent.goal.path.poses and len(self.history) == self.hislen:
             # Check if we've been stopped if we have a goal
             if (getDist(self.history[0].position, self.history[-1].position) < 0.5 and
@@ -307,7 +326,7 @@ class BCMonitors():
                             self.blgoals = []
 
                     # Tell the planner to replan and blacklist
-                    self.task_pub.publish('unstuck')
+                    self.blacklistUpdated = True
 
                 self.updateStatus('Stuck')
                 rospy.loginfo(self.id + ' has not moved!')

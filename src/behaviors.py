@@ -146,19 +146,25 @@ class Explore(DefaultBehavior):
     def execute(self):
         # Explore with goal deconfliction
         self.a.stopStart = True
-        # If a replan was requested somewhere, trigger it
-        if self.a.replan:
-            self.a.updateStatus('Replanning')
-            rospy.loginfo(self.a.id + ' requesting replan')
-            self.a.task_pub.publish('eop')
-            self.a.replan = False
         # Reduce all the redundant explore messages
         if self.a.agent.status != 'Explore':
             self.a.agent.status = 'Explore'
             self.a.home_pub.publish(False)
             self.a.task_pub.publish(self.a.agent.status)
-        # Find the best goal point to go to
-        self.a.deconflictGoals()
+
+        # Find the best goal point to go to, unless we need a blacklist replan
+        if not self.a.blacklistUpdated:
+            self.a.deconflictGoals()
+
+        # If a replan was requested somewhere, trigger it
+        if self.a.replan or self.a.blacklistUpdated:
+            self.a.updateStatus('Replanning')
+            rospy.loginfo(self.a.id + ' requesting replan')
+            if self.a.blacklistUpdated:
+                self.a.task_pub.publish('unstuck')
+            else:
+                self.a.task_pub.publish(self.a.replanCommand)
+                self.a.replan = False
 
         # If the planner can't plan, and we've reached the previous goal, or are stuck,
         # switch to trajectory follower to go towards home
@@ -167,7 +173,7 @@ class Explore(DefaultBehavior):
                         self.a.agent.odometry.pose.pose.position) < 1.0)):
             self.a.traj_pub.publish(True)
             # Try to get the planner to replan
-            self.a.task_pub.publish('eop')
+            self.a.task_pub.publish(self.a.replanCommand)
             self.a.updateStatus('Following Trajectory')
             rospy.loginfo(self.a.id + ' using trajectory follower during explore')
             # Stop using the old goal and path or else we'll get stuck in a loop

@@ -30,6 +30,8 @@
   <arg name="fuseDist" default="3.0" />
   <!-- Distance between goal points for deconfliction -->
   <arg name="deconflictRadius" default="2.5" />
+  <!-- Set to true if planner only outputs one goal at a time.  False if expecting goal array -->
+  <arg name="singleGoalDeconflict" default="false" />
   <!-- How long without a message to consider 'lost comms' -->
   <arg name="commThreshold" default="2" />
   <!-- How long to wait before trying subsequent direct message requests -->
@@ -60,6 +62,8 @@
   <arg name="useMesh" default="false" />
   <!-- Whether to run in virtual mode.  If enabled, simcomms and useMesh should be false! -->
   <arg name="useVirtual" default="false" />
+  <!-- Command to force planner to replan, without blacklisting -->
+  <arg name="replanCommand" default="eop" />
   <!-- Topic the frontier exploration node listens to to calculate path home -->
   <arg name="homeTopic" default="report_artifact" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
@@ -97,6 +101,7 @@
     <param name="reportImages" value="$(arg reportImages)" />
     <param name="fuseDist" value="$(arg fuseDist)" />
     <param name="deconflictRadius" value="$(arg deconflictRadius)" />
+    <param name="singleGoalDeconflict" value="$(arg singleGoalDeconflict)" />
     <param name="commThreshold" value="$(arg commThreshold)" />
     <param name="dmWait" value="$(arg dmWait)" />
     <param name="stopCheck" value="$(arg stopCheck)" />
@@ -111,6 +116,7 @@
     <param name="commTopic" value="$(arg commTopic)" />
     <param name="useMesh" value="$(arg useMesh)" />
     <param name="useVirtual" value="$(arg useVirtual)" />
+    <param name="replanCommand" value="$(arg replanCommand)" />
     <param name="homeTopic" value="$(arg homeTopic)" />
     <param name="stopTopic" value="$(arg stopTopic)" />
     <param name="stopCommand" value="$(arg stopCommand)" />

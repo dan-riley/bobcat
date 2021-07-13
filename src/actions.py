@@ -27,6 +27,8 @@ class BCActions():
         goalTopic = rospy.get_param('bobcat/goalTopic', 'ma_goal')
         pathTopic = rospy.get_param('bobcat/pathTopic', 'ma_goal_path')
         self.stopCommand = rospy.get_param('bobcat/stopCommand', True)
+        self.replanCommand = rospy.get_param('bobcat/replanCommand', 'deconflict')
+        self.singleGoalDeconflict = rospy.get_param('bobcat/singleGoalDeconflict', False)
 
         self.task_pub = rospy.Publisher('task', String, queue_size=10, latch=True)
         self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
@@ -99,8 +101,9 @@ class BCActions():
         # Last goal and path chosen
         curgoal = self.agent.goal.pose.pose.position
         curpos = self.agent.odometry.pose.pose.position
+        expgoal = self.agent.exploreGoal.pose.position
         # Keep going to long distance goal, unless it's home, or we get a new potential goal close
-        if (getDist(curpos, self.agent.exploreGoal.pose.position) > self.mappingRange and
+        if (getDist(curpos, expgoal) > self.mappingRange and
                 getDist(curpos, curgoal) > self.mappingRange + 2.0 and
                 not (curgoal.x == 0 and curgoal.y == 0 and curgoal.z == 0)):
 
@@ -126,7 +129,45 @@ class BCActions():
                 rospy.loginfo(self.id + ' continuing to long distance goal')
                 return
 
-        if not goals:
+        if (self.singleGoalDeconflict and
+                not (expgoal.x == 0 and expgoal.y == 0 and expgoal.z == 0)):
+            # Only getting one goal point so have to request a replan if there's a conflict
+            gpos = self.agent.exploreGoal.pose.position
+            godom = self.agent.odometry.pose.pose.position
+            # Assume the point will be good to start
+            conflict = False
+
+            # Global planner should take care of this now, but it's a double check
+            for goal in self.blacklist.points:
+                if getDist(gpos, goal) < self.deconflictRadius:
+                    conflict = True
+                    self.updateStatus('Replanning Blacklist')
+                    rospy.loginfo(self.id + ' replanning due to blacklist')
+                    break
+
+            if not conflict:
+                # Check each neighbors' goal for conflict
+                for neighbor in self.neighbors.values():
+                    npos = neighbor.goal.pose.pose.position
+                    nodom = neighbor.odometry.pose.pose.position
+                    # Check whether they are within the defined range
+                    if getDist(gpos, npos) < self.deconflictRadius:
+                        # If our cost is more than the neighbor, don't go to this goal
+                        if getDist(gpos, godom) > getDist(npos, nodom):
+                            conflict = True
+                            self.updateStatus('Replanning Neighbor')
+                            rospy.loginfo(self.id + ' replanning due to neighbor')
+                            # Don't need to check any more neighbors for this goal if conflict
+                            break
+
+            if conflict:
+                # Request a replan
+                self.replan = True
+
+            # Set the goal to the planner's goal
+            self.agent.goal.pose = self.agent.exploreGoal
+            self.agent.goal.path = self.agent.explorePath
+        elif not goals:
             # Set the goal to the frontier goal
             # This should cause us to navigate to the goal, then go home if still no plan
             self.agent.goal.pose = self.agent.exploreGoal
@@ -136,6 +177,7 @@ class BCActions():
             # May want to consider stopping in place if there is a conflict!
             self.agent.goal = goals[0]
         else:
+            # Receiving multiple goals from planner, so we can choose one directly
             # TODO add check for location of neighbor and don't go there
             # Otherwise, deconflict with neighbor goals
             # Start true to initiate loop
@@ -210,6 +252,7 @@ class BCActions():
 
     def move(self):
         # Start movement control, usually after a stop
+        self.ignoreStopCommand = True
         self.agent.status = 'Moving'
         self.task_pub.publish(self.agent.status)
         self.stop_pub.publish(not self.stopCommand)
@@ -257,7 +300,7 @@ class BCActions():
         if not self.planner_status and reason != 'guiCommand':
             self.traj_pub.publish(True)
             # Try to get the planner to replan
-            self.task_pub.publish('eop')
+            self.task_pub.publish(self.replanCommand)
             self.updateStatus('Following Trajectory')
             rospy.loginfo(self.id + ' using trajectory follower for home')
         else:

@@ -59,6 +59,7 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
             # Do this here so we only do this calculation until leaving the starting area
             if getDist(self.agent.odometry.pose.pose.position, self.initialPose.position) > 1:
                 self.startedMission = True
+                self.ignoreStopCommand = False
 
         self.history.append(self.agent.odometry.pose.pose)
         if len(self.history) > self.hislen:
