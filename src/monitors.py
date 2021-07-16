@@ -4,6 +4,7 @@ import math
 import rospy
 
 from std_msgs.msg import Bool
+from std_msgs.msg import String
 from geometry_msgs.msg import Point
 from marble_origin_detection_msgs.msg import OriginDetectionStatus
 
@@ -65,6 +66,7 @@ class BCMonitors():
         self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
         self.stop_sub = rospy.Subscriber(stopTopic, Bool, self.StopMonitor)
         self.estop_sub = rospy.Subscriber('estop_cmd', Bool, self.EStopMonitor)
+        self.input_sub = rospy.Subscriber('forceTask', String, self.InputMonitor)
         self.planner_sub = rospy.Subscriber('planner_status', Bool, self.PlannerMonitor)
         self.launch_sub = rospy.Subscriber('velocity_controller/enable', Bool, self.LaunchMonitor)
 
@@ -97,6 +99,11 @@ class BCMonitors():
         if not self.ignoreStopCommand:
             # Republish any hardware estop commands to the software estop so they match
             self.stop_pub.publish(data.data and self.stopCommand)
+
+    def InputMonitor(self, data):
+        self.agent.guiTaskName = 'task'
+        self.agent.guiTaskValue = data.data
+        self.agent.guiAccept = True
 
     def PlannerMonitor(self, data):
         self.planner_status = data.data
