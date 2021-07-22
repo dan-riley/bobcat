@@ -63,7 +63,7 @@
   <!-- Whether to run in virtual mode.  If enabled, simcomms and useMesh should be false! -->
   <arg name="useVirtual" default="false" />
   <!-- Command to force planner to replan, without blacklisting -->
-  <arg name="replanCommand" default="eop" />
+  <arg name="replanCommand" default="deconflict" />
   <!-- Topic the frontier exploration node listens to to calculate path home -->
   <arg name="homeTopic" default="report_artifact" />
   <!-- Other topics to monitor.  Need to make sure these are in multimaster settings on each agent! -->
