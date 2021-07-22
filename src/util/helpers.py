@@ -77,3 +77,6 @@ def subsample(goal):
         pubgoal.path.poses.append(goal.path.poses[-1])
 
     return pubgoal
+
+def getSeq(octomap):
+    return octomap.header.seq

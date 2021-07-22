@@ -96,8 +96,8 @@ class BCMonitors():
             self.replan = True
 
     def EStopMonitor(self, data):
-        if not self.ignoreStopCommand:
-            # Republish any hardware estop commands to the software estop so they match
+        if not self.ignoreStopCommand and data.data:
+            # Republish only hardware estop 'stop' commands to the software estop so they match
             self.stop_pub.publish(data.data and self.stopCommand)
 
     def InputMonitor(self, data):

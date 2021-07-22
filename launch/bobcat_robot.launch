@@ -3,6 +3,7 @@
   <arg name="vehicle" default="H01" />
   <arg name="useMesh" default="false" />
   <arg name="singleGoalDeconflict" default="true" />
+  <arg name="myBeacons" default="" />
   <arg name="turnDetect" default="true" />
   <arg name="delayDrop" default="false" />
   <arg name="reverseDrop" default="true" />
@@ -13,6 +14,7 @@
     <arg name="type" value="robot" />
     <arg name="useMesh" value="$(arg useMesh)" />
     <arg name="singleGoalDeconflict" value="$(arg singleGoalDeconflict)" />
+    <arg name="myBeacons" value="$(arg myBeacons)" />
     <arg name="turnDetect" value="$(arg turnDetect)" />
     <arg name="delayDrop" value="$(arg delayDrop)" />
     <arg name="reverseDrop" value="$(arg reverseDrop)" />

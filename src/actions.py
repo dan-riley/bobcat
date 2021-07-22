@@ -260,6 +260,7 @@ class BCActions():
     def stop(self):
         # Stop the robot by publishing no path, but don't change the displayed goal
         if self.agent.status != 'Stop':
+            self.ignoreStopCommand = True
             self.agent.status = 'Stop'
             self.task_pub.publish(self.agent.status)
             self.stop_pub.publish(self.stopCommand)

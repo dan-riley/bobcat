@@ -22,7 +22,7 @@ from bobcat.msg import DMRespArray
 from marble_mapping.msg import OctomapArray
 from marble_mapping.msg import OctomapNeighbors
 
-from util.helpers import getDist, getDist2D, subsample
+from util.helpers import getDist, getDist2D, subsample, getSeq
 from containers import Agent, Base, BeaconObj, ArtifactReport
 
 
@@ -563,6 +563,7 @@ class BOBCAT(object):
         receivedDM = False
         for agent in resp.agents:
             neighbor = self.neighbors[agent.id]
+            resort = False
             # Add the new diffs to our array and update the total
             for octomap in agent.mapDiffs.octomaps:
                 neighbor.mapDiffs.octomaps.append(octomap)
@@ -571,7 +572,13 @@ class BOBCAT(object):
                 # Remove the received diffs, in case we didn't get all of them
                 if octomap.header.seq in neighbor.missingDiffs:
                     neighbor.missingDiffs.remove(octomap.header.seq)
+                # We got a diff out of order, so make sure we re-sort the array
+                if octomap.header.seq < neighbor.numDiffs - 1:
+                    resort = True
                 receivedDM = True
+
+            if resort:
+                neighbor.mapDiffs.octomaps.sort(key=getSeq)
 
             # Add the new images to our artifacts
             for image in agent.images:
