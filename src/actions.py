@@ -291,8 +291,9 @@ class BCActions():
 
         # Set the new task, and use frontier exploration's goal and path
         self.stopStart = True
-        self.agent.status = reason
-        self.task_pub.publish(self.agent.status)
+        if self.agent.status != reason:
+            self.agent.status = reason
+            self.task_pub.publish(self.agent.status)
         self.goal_pub.publish(self.agent.exploreGoal)
         self.path_pub.publish(self.agent.explorePath)
         self.agent.goal.pose = self.agent.exploreGoal

@@ -49,6 +49,7 @@ class BCMonitors():
         self.checkReverse = True
         self.stuck = 0
         self.ignoreStopCommand = True
+        self.lastStopCommand = rospy.get_rostime() + rospy.Duration(1)
 
         # Monitor outputs
         self.replan = False
@@ -75,12 +76,15 @@ class BCMonitors():
             self.wait = False
 
     def StopMonitor(self, data):
-        # Ignore any commands if inhibited, which node is at startup
-        if self.ignoreStopCommand:
+        # Ignore any commands if inhibited, which node is at startup, or if it's repeated too fast
+        if self.ignoreStopCommand or rospy.get_rostime() < self.lastStopCommand:
             if self.startedMission:
                 # Only reset the ignore once the mission has started
                 self.ignoreStopCommand = False
             return
+
+        # Timeout for fast repeated commands
+        self.lastStopCommand = rospy.get_rostime() + rospy.Duration(1)
 
         # This technically monitors the estop whether sent from Bobcat or externally,
         # but the main point is to capture joystick commands to stop the robot
@@ -326,7 +330,7 @@ class BCMonitors():
                         avgGoal = averagePosition(newgoals)
 
                         # Make sure it's not the origin and we're not already close to the goal
-                        if (not (avgGoal.x == 0 and avgGoal.y == 0 and avgGoal.z == 0) and
+                        if (not (avgGoal.x == 0 and avgGoal.y == 0) and
                                 getDist(self.agent.odometry.pose.pose.position,
                                         self.agent.goal.pose.pose.position) > 0.5):
                             self.addBlacklist(avgGoal)
