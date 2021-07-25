@@ -29,6 +29,7 @@ class BCActions():
         self.stopCommand = rospy.get_param('bobcat/stopCommand', True)
         self.replanCommand = rospy.get_param('bobcat/replanCommand', 'deconflict')
         self.singleGoalDeconflict = rospy.get_param('bobcat/singleGoalDeconflict', False)
+        self.useExtTraj = rospy.get_param('bobcat/useExtTraj', False)
 
         self.task_pub = rospy.Publisher('task', String, queue_size=10, latch=True)
         self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
@@ -238,7 +239,7 @@ class BCActions():
                 self.agent.goal = goals[i - 1]
 
         # Final blacklist check for single goal
-        if not goals or len(goals) == 1:
+        if not self.singleGoalDeconflict and (not goals or len(goals) == 1):
             goal = self.agent.goal.pose.pose.position
             if len(self.agent.goal.path.poses) > 0:
                 pathend = self.agent.goal.path.poses[-1].pose.position
@@ -253,8 +254,6 @@ class BCActions():
     def move(self):
         # Start movement control, usually after a stop
         self.ignoreStopCommand = True
-        self.agent.status = 'Moving'
-        self.task_pub.publish(self.agent.status)
         self.stop_pub.publish(not self.stopCommand)
 
     def stop(self):
@@ -292,6 +291,7 @@ class BCActions():
         # Set the new task, and use frontier exploration's goal and path
         self.stopStart = True
         if self.agent.status != reason:
+            self.move()
             self.agent.status = reason
             self.task_pub.publish(self.agent.status)
         self.goal_pub.publish(self.agent.exploreGoal)
@@ -299,11 +299,11 @@ class BCActions():
         self.agent.goal.pose = self.agent.exploreGoal
         self.agent.goal.path = self.agent.explorePath
 
-        if not self.planner_status and reason != 'guiCommand':
+        if self.useExtTraj and not self.planner_status and reason != 'guiCommand':
             self.traj_pub.publish(True)
             # Try to get the planner to replan
             self.task_pub.publish(self.replanCommand)
             self.updateStatus('Following Trajectory')
             rospy.loginfo(self.id + ' using trajectory follower for home')
-        else:
+        elif self.useExtTraj:
             self.traj_pub.publish(False)

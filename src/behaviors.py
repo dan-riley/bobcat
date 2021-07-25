@@ -116,7 +116,6 @@ class DeployBeacon(DefaultBehavior):
                 # Resume the mission
                 if self.a.guiBehavior == 'deployBeacon':
                     self.a.guiBehavior = None
-                self.a.move()
                 self.a.behaviors['explore'].execute()
                 self.a.deploy_pub.publish(False)
 
@@ -148,6 +147,7 @@ class Explore(DefaultBehavior):
         self.a.stopStart = True
         # Reduce all the redundant explore messages
         if self.a.agent.status != 'Explore':
+            self.a.move()
             self.a.agent.status = 'Explore'
             self.a.home_pub.publish(False)
             self.a.task_pub.publish(self.a.agent.status)
@@ -156,8 +156,14 @@ class Explore(DefaultBehavior):
         if not self.a.blacklistUpdated:
             self.a.deconflictGoals()
 
-        # If a replan was requested somewhere, trigger it
-        if self.a.replan or self.a.blacklistUpdated:
+        # If a replan was requested somewhere, trigger it, unless we already asked recently
+        alreadyReplanned = False
+        if ((self.a.lastReplanTime + rospy.Duration(self.a.stopCheck) > rospy.get_rostime() or
+                self.a.lastReplanGoal != self.a.agent.exploreGoal) and
+                (self.a.replan or self.a.blacklistUpdated)):
+            alreadyReplanned = True
+            self.a.lastReplanGoal = self.a.agent.exploreGoal
+            self.a.lastReplanTime = rospy.get_rostime()
             self.a.updateStatus('Replanning')
             rospy.loginfo(self.a.id + ' requesting replan')
             if self.a.blacklistUpdated:
@@ -171,11 +177,13 @@ class Explore(DefaultBehavior):
         if self.a.useTraj or (not self.a.planner_status and (self.a.stuck > self.a.stopCheck or
                 getDist(self.a.agent.goal.pose.pose.position,
                         self.a.agent.odometry.pose.pose.position) < 1.0)):
-            self.a.traj_pub.publish(True)
             # Try to get the planner to replan
-            self.a.task_pub.publish(self.a.replanCommand)
-            self.a.updateStatus('Following Trajectory')
-            rospy.loginfo(self.a.id + ' using trajectory follower during explore')
+            if not alreadyReplanned:
+                self.a.task_pub.publish(self.a.replanCommand)
+            if self.a.useExtTraj:
+                self.a.updateStatus('Following Trajectory')
+                rospy.loginfo(self.a.id + ' using trajectory follower during explore')
+                self.a.traj_pub.publish(True)
             # Stop using the old goal and path or else we'll get stuck in a loop
             self.a.agent.goal.pose = self.a.agent.exploreGoal
             self.a.agent.goal.path = self.a.agent.explorePath
@@ -186,7 +194,7 @@ class Explore(DefaultBehavior):
                 if (not self.a.planner_status and getDist(pathend,
                         self.a.agent.odometry.pose.pose.position) < 1.0):
                    self.a.addBlacklist(pathend)
-        else:
+        elif self.a.useExtTraj:
             self.a.traj_pub.publish(False)
 
         # Publish the selected goal and path for the guidance controller

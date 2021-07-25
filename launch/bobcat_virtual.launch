@@ -16,7 +16,7 @@
   <arg name="delayDrop" default="false" />
   <arg name="reverseDrop" default="true" />
   <arg name="mappingRange" default="5.0" />
-  <arg name="replanCommand" default="deconflict" />
+  <arg name="useExtTraj" default="false" />
 
   <include file="$(find bobcat)/launch/bobcat.launch">
     <arg name="totalBeacons" value="24" />
@@ -44,6 +44,6 @@
     <arg name="delayDrop" value="$(arg delayDrop)" />
     <arg name="reverseDrop" value="$(arg reverseDrop)" />
     <arg name="mappingRange" value="$(arg mappingRange)" />
-    <arg name="replanCommand" value="$(arg replanCommand)" />
+    <arg name="useExtTraj" value="$(arg useExtTraj)" />
   </include>
 </launch>

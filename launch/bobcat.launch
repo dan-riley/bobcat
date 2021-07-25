@@ -62,6 +62,8 @@
   <arg name="useMesh" default="false" />
   <!-- Whether to run in virtual mode.  If enabled, simcomms and useMesh should be false! -->
   <arg name="useVirtual" default="false" />
+  <!-- Whether to use an external trajectory follower for fallback planning to home -->
+  <arg name="useExtTraj" default="false" />
   <!-- Command to force planner to replan, without blacklisting -->
   <arg name="replanCommand" default="deconflict" />
   <!-- Topic the frontier exploration node listens to to calculate path home -->
@@ -116,6 +118,7 @@
     <param name="commTopic" value="$(arg commTopic)" />
     <param name="useMesh" value="$(arg useMesh)" />
     <param name="useVirtual" value="$(arg useVirtual)" />
+    <param name="useExtTraj" value="$(arg useExtTraj)" />
     <param name="replanCommand" value="$(arg replanCommand)" />
     <param name="homeTopic" value="$(arg homeTopic)" />
     <param name="stopTopic" value="$(arg stopTopic)" />

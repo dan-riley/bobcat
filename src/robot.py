@@ -27,6 +27,8 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         self.commListen = True
         self.debugWeights = False
         self.lastBehavior = None
+        self.lastReplanGoal = None
+        self.lastReplanTime = rospy.get_rostime()
 
         # Initialize all of the BOBCAT modules
         BCMonitors.__init__(self)
@@ -52,14 +54,18 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         self.behaviors['deployBeacon'] = behaviors.DeployBeacon(self)
 
     def updateHistory(self):
-        # Check whether we've started the mission by moving 5 meters
+        # Check whether we've started the mission by moving 3 meters
         if not self.initialPose:
-            self.initialPose = self.agent.odometry.pose.pose
+            # Make sure we have a valid pose and it's not just the blank initialized pose
+            if (self.agent.odometry.pose.pose.position.x != 0 and
+                self.agent.odometry.pose.pose.position.y != 0 and
+                self.agent.odometry.pose.pose.position.z != 0):
+                self.initialPose = self.agent.odometry.pose.pose
         elif not self.startedMission:
             # Do this here so we only do this calculation until leaving the starting area
-            if getDist(self.agent.odometry.pose.pose.position, self.initialPose.position) > 1:
+            if getDist(self.agent.odometry.pose.pose.position, self.initialPose.position) > 3:
+                rospy.loginfo('Started Mission')
                 self.startedMission = True
-                self.ignoreStopCommand = False
 
         self.history.append(self.agent.odometry.pose.pose)
         if len(self.history) > self.hislen:

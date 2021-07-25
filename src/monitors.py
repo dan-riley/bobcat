@@ -48,7 +48,7 @@ class BCMonitors():
         self.dropReason = ''
         self.checkReverse = True
         self.stuck = 0
-        self.ignoreStopCommand = True
+        self.ignoreStopCommand = False
         self.lastStopCommand = rospy.get_rostime() + rospy.Duration(1)
 
         # Monitor outputs
@@ -76,11 +76,9 @@ class BCMonitors():
             self.wait = False
 
     def StopMonitor(self, data):
-        # Ignore any commands if inhibited, which node is at startup, or if it's repeated too fast
+        # Ignore any commands if inhibited, or if it's repeated too fast
         if self.ignoreStopCommand or rospy.get_rostime() < self.lastStopCommand:
-            if self.startedMission:
-                # Only reset the ignore once the mission has started
-                self.ignoreStopCommand = False
+            self.ignoreStopCommand = False
             return
 
         # Timeout for fast repeated commands
@@ -95,9 +93,6 @@ class BCMonitors():
         elif self.guiBehavior == 'stop':
             # If we were stopped, we should go back to whatever the last thing requested was
             self.guiBehavior = self.lastGuiBehavior
-        elif self.guiBehavior == None:
-            # If we get an enable, but we're not already stopped and exploring, replan
-            self.replan = True
 
     def EStopMonitor(self, data):
         if not self.ignoreStopCommand and data.data:
@@ -368,10 +363,7 @@ class BCMonitors():
                     self.guiBehavior = 'deployBeacon'
                     self.dropReason = 'GUI Command'
 
-                # Make sure the robot is enabled unless it was told to stop
-                # Need to confirm this is still needed
-                if self.guiBehavior != 'stop':
-                    self.move()
+                rospy.loginfo(self.id + ' received new GUI Task ' + self.agent.guiTaskValue)
             else:
                 # Publish a boolean to the given topic for direct control
                 # Shouldn't really be in a Monitor but for now the best place for it
