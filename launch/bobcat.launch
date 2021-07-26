@@ -94,6 +94,7 @@
     <param name="type" value="$(arg type)" />
     <param name="myBeacons" value="$(arg myBeacons)" />
     <param name="totalBeacons" value="$(arg totalBeacons)" />
+    <param name="smartBeacons" value="$(arg smartBeacons)" />
     <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
     <param name="rate" value="$(arg rate)" />
     <param name="viz" value="$(arg viz)" />

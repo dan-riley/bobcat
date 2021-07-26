@@ -276,6 +276,9 @@ class BCActions():
             self.goal_pub.publish(inplace)
             self.path_pub.publish(path)
             self.stopStart = False
+        else:
+            self.goal_pub.publish(self.agent.exploreGoal)
+            self.path_pub.publish(self.agent.explorePath)
 
     def setGoalPoint(self, reason):
         # Set the goal point for frontier exploration

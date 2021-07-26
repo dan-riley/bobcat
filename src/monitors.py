@@ -60,6 +60,8 @@ class BCMonitors():
         self.launch_status = True
         self.isAerial = False
         self.blacklistUpdated = False
+        self.guiBehavior = 'stop' # Start the robot in stop mode
+        self.lastGuiBehavior = None
 
         # Subscribers for some Monitors
         waitTopic = rospy.get_param('bobcat/waitTopic', 'origin_detection_status')

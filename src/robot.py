@@ -22,8 +22,6 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         self.hislen = self.rate * 10  # How long the odometry history should be
         self.newStatus = False
         self.statusCount = 0
-        self.guiBehavior = None
-        self.lastGuiBehavior = None
         self.commListen = True
         self.debugWeights = False
         self.lastBehavior = None

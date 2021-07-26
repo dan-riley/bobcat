@@ -41,11 +41,10 @@ class Agent(object):
     def initialize(self, resetTime=rospy.Time()):
         self.status = ''
         self.guiStamp = rospy.get_rostime()
-        # Start robots in Stop mode
-        self.guiTaskName = 'task'
-        self.guiTaskValue = 'Stop'
+        self.guiTaskName = ''
+        self.guiTaskValue = ''
         self.guiGoalPoint = PoseStamped()
-        self.guiAccept = True
+        self.guiAccept = False
         self.guiGoalAccept = False
         self.odometry = Odometry()
         self.exploreGoal = PoseStamped()
