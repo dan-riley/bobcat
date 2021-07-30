@@ -43,9 +43,9 @@
   <!-- Mapping range -->
   <arg name="mappingRange" default="5.0" />
   <!-- How far to drive from the anchor before automatically dropping a beacon -->
-  <arg name="anchorDropDist" default="100" />
+  <arg name="anchorDropDist" default="200" />
   <!-- How far to drive before automatically dropping a beacon -->
-  <arg name="dropDist" default="100" />
+  <arg name="dropDist" default="200" />
   <!-- Minimum distance between nodes before dropping another beacon -->
   <arg name="junctionDist" default="10" />
   <!-- Whether to use turn detection to drop beacons -->

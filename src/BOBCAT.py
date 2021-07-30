@@ -824,6 +824,7 @@ class BOBCAT(object):
                     # Only pass hardReset for resetting self map!
                     neighbor_diffs.hardReset = True
                     neighbor_diffs.clear = True
+                neighbor_diffs.header.stamp = rospy.get_rostime()
                 self.neighbor_maps_pub.publish(neighbor_diffs)
 
             if self.useViz:

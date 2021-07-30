@@ -19,7 +19,7 @@
   <arg name="useExtTraj" default="false" />
 
   <include file="$(find bobcat)/launch/bobcat.launch">
-    <arg name="totalBeacons" value="24" />
+    <arg name="totalBeacons" value="36" />
     <arg name="simcomms" value="false" />
     <arg name="anchorDropDist" value="80" />
     <arg name="dropDist" value="50" />
