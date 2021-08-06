@@ -34,6 +34,10 @@ class BCMonitors():
         self.delayDrop = rospy.get_param('bobcat/delayDrop', False)
         # Whether to backtrack to deploy a beacon
         self.reverseDropEnable = rospy.get_param('bobcat/reverseDrop', False)
+        # How many artifacts are needed before reporting
+        self.maxNewArtifacts = rospy.get_param('bobcat/maxNewArtifacts', 5)
+        # Maximum amount of time to wait until reporting
+        self.maxReportTime = rospy.get_param('bobcat/maxReportTime', 300)
 
         # Static anchor position
         self.anchorPos = Point()
@@ -50,6 +54,8 @@ class BCMonitors():
         self.stuck = 0
         self.ignoreStopCommand = False
         self.lastStopCommand = rospy.get_rostime() + rospy.Duration(1)
+        self.newArtifactTime = rospy.Time()
+        self.numNewArtifacts = 0
 
         # Monitor outputs
         self.replan = False
@@ -268,26 +274,25 @@ class BCMonitors():
                         self.deployBeacon = True
 
     def ArtifactMonitor(self):
-        # If we didn't add anything new, check if any still need reported
-        if not self.report:
-            for artifact in self.artifacts.values():
-                if artifact.agent_id == self.id and not artifact.reported:
-                    self.report = True
-                    self.agent.updateHash()
-                    break
-
         # Identify our report so we can track that the base station has seen it
-        if self.report:
-            rospy.loginfo('will report...')
+        if self.numNewArtifacts:
+            # Make sure we have enough new artifacts OR enough time has passed
+            # Consider making this an Objective evaluation to scale as we get more
+            if ((self.numNewArtifacts >= self.maxNewArtifacts) or
+                 (rospy.get_rostime() >
+                  self.newArtifactTime + rospy.Duration(self.maxReportTime))):
+                self.report = True
+
             # Once we see the base has our latest artifact report we can stop going home
             if self.solo or self.base.lastArtifact == self.agent.lastArtifact:
                 # Turn off reporting
                 self.report = False
+                self.numNewArtifacts = 0
                 for artifact in self.artifacts.values():
                     artifact.reported = True
 
                 # Resume normal operation
-                rospy.loginfo(self.id + ' resuming operation...')
+                rospy.loginfo(self.id + ' artifacts reported')
             elif self.base.incomm and self.base.lastArtifact != self.agent.lastArtifact:
                 self.agent.updateHash()
 

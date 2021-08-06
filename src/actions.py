@@ -19,6 +19,7 @@ class BCActions():
     def __init__(self):
         self.stopStart = True
         self.useTraj = False
+        self.lastGoalTime = rospy.Time()
 
         # Topics for publishers
         homeTopic = rospy.get_param('bobcat/homeTopic', 'report_artifact')
@@ -286,8 +287,11 @@ class BCActions():
             self.home_pub.publish(True)
 
         # Set the new task, and use frontier exploration's goal and path
+        # Republish the command periodically in case planner went somewhere else
         self.stopStart = True
-        if self.agent.status != reason:
+        if (self.agent.status != reason or
+                rospy.get_rostime() > self.lastGoalTime + rospy.Duration(self.stopCheck)):
+            self.lastGoalTime = rospy.get_rostime()
             self.move()
             self.agent.status = reason
             self.task_pub.publish(self.agent.status)

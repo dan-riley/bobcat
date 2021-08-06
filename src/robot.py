@@ -39,7 +39,7 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         self.objectives = {}
         self.objectives['explore'] = objectives.Explore(self, 2)
         self.objectives['report'] = objectives.ReportArtifacts(self, 1)
-        self.objectives['input'] = objectives.Input(self, 1)
+        self.objectives['input'] = objectives.Input(self, 0)
         self.objectives['maintainComms'] = objectives.MaintainComms(self, 3)
         self.objectives['extendComms'] = objectives.ExtendComms(self, 1)
 

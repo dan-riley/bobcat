@@ -725,7 +725,11 @@ class BOBCAT(object):
                                 break
 
                     if not ignore:
-                        self.report = True
+                        # Add to the artifact count since last report and if it's
+                        # the first of a new set of artifacts, start the timer for reporting
+                        if self.numNewArtifacts == 0:
+                            self.newArtifactTime = rospy.get_rostime()
+                        self.numNewArtifacts += 1
                         updateString = True
 
                 # Now add the artifact to the array

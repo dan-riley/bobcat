@@ -21,7 +21,10 @@ class DefaultObjective():
         ranges = 0.4
         boost = 0.5
 
-        if self.a.numPriorities == 1:
+        if self.priority == 0:
+            # For any objective that needs to be able to override no matter what, ie Input
+            self.initialWeight = 1000
+        elif self.a.numPriorities == 1:
             # Equal weight objectives
             self.initialWeight = 1
         else:
