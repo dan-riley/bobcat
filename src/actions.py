@@ -300,11 +300,12 @@ class BCActions():
         self.agent.goal.pose = self.agent.exploreGoal
         self.agent.goal.path = self.agent.explorePath
 
-        if self.useExtTraj and not self.planner_status and reason != 'guiCommand':
+        # Use the external trajectory follower to go home since planner refuses
+        # Don't ask immediately for a replan, the command will be sent periodically
+        # This allows us to move a bit before requesting the plan again
+        if not self.planner_status and reason != 'guiCommand':
             self.traj_pub.publish(True)
-            # Try to get the planner to replan
-            self.task_pub.publish(self.replanCommand)
             self.updateStatus('Following Trajectory')
             rospy.loginfo(self.id + ' using trajectory follower for home')
-        elif self.useExtTraj:
+        else:
             self.traj_pub.publish(False)
