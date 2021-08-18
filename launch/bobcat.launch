@@ -21,6 +21,8 @@
   <arg name="simcomms" default="false" />
   <!-- Whether to run the agent solo (simulates always in comm with base) -->
   <arg name="solo" default="false" />
+  <!-- Whether to share pose graph.  Disabled by default here but enabled in robot launch. -->
+  <arg name="sharePoseGraph" default="false" />
   <!-- Whether to transmit images. Disable for low bandwidth situations.  May be different on each. -->
   <arg name="sendImages" default="true" />
   <!-- True ensures images are received by Base Station before exiting report -->
@@ -86,11 +88,19 @@
   <arg name="mapDiffsTopic" default="map_diffs" />
   <arg name="nodeTopic" default="at_node_center" />
   <arg name="artifactsTopic" default="artifact_array/relay" />
-  <arg name="artifactImagesTopic" default="artifact_image_to_base" />
+  <arg name="poseGraphTopic" default="lio_sam/mapping/path" />
   <!-- Approximate location of anchor node, for first beacon drop distance calc -->
   <arg name="anchorX" default="0.0" />
   <arg name="anchorY" default="0.0" />
   <arg name="anchorZ" default="0.0" />
+  <!-- Subsampling parameters for Goal Path and Pose Graph.  Set distance to 0 to disable. -->
+  <arg name="subsampleDistanceGoalPath" default="0.5" />
+  <arg name="subsampleAngleGoalPath" default="5" />
+  <arg name="subsampleDistancePoseGraph" default="1.0" />
+  <arg name="subsampleAnglePoseGraph" default="20" />
+
+  <!-- The tf buffer, run externally for better cpu speed, only when using pose graph -->
+  <node ns="$(arg ns)" pkg="tf2_ros" type="buffer_server" name="buffer_server" if="$(arg sharePoseGraph)" />
 
   <node ns="$(arg ns)" pkg="bobcat" type="bobcat_node.py" name="bobcat" output="screen">
     <!-- Parameters -->
@@ -104,6 +114,7 @@
     <param name="viz" value="$(arg viz)" />
     <param name="simcomms" value="$(arg simcomms)" />
     <param name="solo" value="$(arg solo)" />
+    <param name="sharePoseGraph" value="$(arg sharePoseGraph)" />
     <param name="sendImages" value="$(arg sendImages)" />
     <param name="reportImages" value="$(arg reportImages)" />
     <param name="maxNewArtifacts" value="$(arg maxNewArtifacts)" />
@@ -140,9 +151,13 @@
     <param name="goalsTopic" value="$(arg goalsTopic)" />
     <param name="nodeTopic" value="$(arg nodeTopic)" />
     <param name="artifactsTopic" value="$(arg artifactsTopic)" />
-    <param name="artifactImagesTopic" value="$(arg artifactImagesTopic)" />
+    <param name="poseGraphTopic" value="$(arg poseGraphTopic)" />
     <param name="anchorX" value="$(arg anchorX)" />
     <param name="anchorY" value="$(arg anchorY)" />
     <param name="anchorZ" value="$(arg anchorZ)" />
+    <param name="subsampleDistanceGoalPath" value="$(arg subsampleDistanceGoalPath)" />
+    <param name="subsampleAngleGoalPath" value="$(arg subsampleAngleGoalPath)" />
+    <param name="subsampleDistancePoseGraph" value="$(arg subsampleDistancePoseGraph)" />
+    <param name="subsampleAnglePoseGraph" value="$(arg subsampleAnglePoseGraph)" />
   </node>
 </launch>

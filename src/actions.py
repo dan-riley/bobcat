@@ -272,6 +272,8 @@ class BCActions():
             self.path_pub.publish(path)
             self.stopStart = False
         else:
+            self.agent.goal.pose = self.agent.exploreGoal
+            self.agent.goal.path = self.agent.explorePath
             self.goal_pub.publish(self.agent.exploreGoal)
             self.path_pub.publish(self.agent.explorePath)
 

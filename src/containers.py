@@ -13,6 +13,7 @@ from marble_artifact_detection_msgs.msg import ArtifactImg
 from bobcat.msg import AgentReset
 from bobcat.msg import BeaconArray
 from bobcat.msg import Goal
+from bobcat.msg import GoalCompressed
 from bobcat.msg import GoalArray
 from marble_mapping.msg import OctomapArray
 
@@ -40,6 +41,7 @@ class Agent(object):
 
     def initialize(self, resetTime=rospy.Time()):
         self.status = ''
+        self.battery = 0
         self.guiStamp = rospy.get_rostime()
         self.guiTaskName = ''
         self.guiTaskValue = ''
@@ -52,7 +54,12 @@ class Agent(object):
         self.exploreGoal.header.frame_id = 'world'
         self.explorePath.header.frame_id = 'world'
         self.goal = Goal()
+        self.goalCompressed = GoalCompressed()
         self.goals = GoalArray()
+        self.poseGraph = Path()
+        self.poseGraphCompressed = []
+        self.latestPoseGraph = 0
+        self.latestPoseGraphAvailable = 0
         self.atnode = Bool()
         self.commBeacons = BeaconArray()
         self.newArtifacts = ArtifactArray()
@@ -60,6 +67,7 @@ class Agent(object):
         self.images = []
         self.missingImages = []
         self.lastArtifact = ''
+        self.lastArtifactPub = rospy.Time();
         self.resetStamp = resetTime
         if resetTime:
             self.resetAgent = True
@@ -76,9 +84,24 @@ class Agent(object):
 
     def updateCommon(self, neighbor):
         self.status = neighbor.status
-        self.odometry = neighbor.odometry
-        self.goal = neighbor.goal
-        self.newArtifacts = neighbor.newArtifacts
+        self.battery = neighbor.battery
+        self.latestPoseGraph = neighbor.latestPoseGraph
+
+        # Empty artifacts are sent most of the time so only store if not
+        if neighbor.newArtifacts.artifacts:
+            self.newArtifacts = neighbor.newArtifacts
+
+        # Convert PoseStamped to Odometry
+        self.odometry.header = neighbor.odometry.header
+        self.odometry.pose.pose = neighbor.odometry.pose
+
+        # Extract the goal and convert from compressed to uncompressed
+        self.goalCompressed = neighbor.goal
+        self.goal.cost = neighbor.goal.cost
+        self.goal.path = self.decompressPath(neighbor.goal.path)
+        # Goal is the last point in the path
+        if len(self.goal.path.poses):
+            self.goal.pose = self.goal.path.poses[-1]
 
         # Update missing diffs if the neighbor said there are new ones
         if not self.diffClear and neighbor.numDiffs > self.numDiffs and not self.reset.ignore:
@@ -151,6 +174,25 @@ class Agent(object):
                 artifact.image_data.data = []
         artifactString = repr(self.checkArtifacts.artifacts).encode('utf-8')
         self.lastArtifact = hashlib.md5(artifactString).hexdigest()
+
+    def decompressPath(self, cpath):
+        path = Path()
+        path.header.stamp = rospy.get_rostime()
+        path.header.frame_id = "world"
+        i = 0
+        while i < len(cpath):
+            pose = PoseStamped()
+            pose.header.frame_id = "world"
+            pose.header.stamp = rospy.get_rostime()
+            pose.pose.position.x = 0.1 * cpath[i]
+            i += 1
+            pose.pose.position.y = 0.1 * cpath[i]
+            i += 1
+            pose.pose.position.z = 0.1 * cpath[i]
+            i += 1
+            path.poses.append(pose)
+
+        return path
 
 
 class Base(object):

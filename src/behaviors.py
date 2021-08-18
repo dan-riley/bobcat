@@ -59,8 +59,7 @@ class DeployBeacon(DefaultBehavior):
                 break
 
         if deploy:
-            # Stop the robot and publish message to deployment mechanism
-            self.a.stop()
+            # Publish message to guidance/deployment mechanism
             pose = self.a.agent.odometry.pose.pose
 
             # TODO doesn't currently work since the node is paused!
@@ -107,11 +106,11 @@ class DeployBeacon(DefaultBehavior):
                         rospy.sleep(3)
                         print(ret.status_message)
                 else:
-                    # Wait to stop, send deploy message, then wait for deployment to finish
-                    rospy.sleep(3)
+                    # Send deploy message; guidance stops, then wait for deployment to finish
                     self.a.deploy_pub.publish(True)
+                    rospy.sleep(3)
                     if not self.a.useVirtual:
-                        rospy.sleep(10)
+                        rospy.sleep(7)
 
                 # Resume the mission
                 if self.a.guiBehavior == 'deployBeacon':
@@ -194,7 +193,7 @@ class Explore(DefaultBehavior):
                 if (not self.a.planner_status and getDist(pathend,
                         self.a.agent.odometry.pose.pose.position) < 1.0):
                    self.a.addBlacklist(pathend)
-        elif self.a.useExtTraj:
+        else:
             self.a.traj_pub.publish(False)
 
         # Publish the selected goal and path for the guidance controller

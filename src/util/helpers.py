@@ -4,7 +4,6 @@ from cmath import rect, phase
 import math
 
 from geometry_msgs.msg import Point
-from bobcat.msg import Goal
 
 
 def getDist(pos1, pos2):
@@ -21,6 +20,35 @@ def getYaw(orientation):
     z = orientation.z
     w = orientation.w
     return math.atan2(2.0 * (x * y + w * z), 1.0 - 2.0 * (y * y + z * z))
+
+
+def getAngle(a, b, c):
+    # Get the angle at point b between 3 points
+    ab = Point()
+    bc = Point()
+    ab.x = b.x - a.x
+    ab.y = b.y - a.y
+    ab.z = b.z - a.z
+    bc.x = c.x - b.x
+    bc.y = c.y - b.y
+    bc.z = c.z - b.z
+
+    normalize(ab)
+    normalize(bc)
+    dot = ab.x * bc.x + ab.y * bc.y + ab.z * bc.z
+
+    if dot > 1: dot = 1
+    if dot < -1: dot = -1
+
+    return math.acos(dot) * 180 / math.pi
+
+
+def normalize(a):
+    mag = math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z)
+    if not mag: return
+    a.x = a.x / mag
+    a.y = a.y / mag
+    a.z = a.z / mag
 
 
 def averagePose(history):
@@ -63,20 +91,6 @@ def angleDiff(a, b):
     d = (d + 180) % 360 - 180
     return d
 
-
-def subsample(goal):
-    pubgoal = Goal()
-    pubgoal.pose = goal.pose
-    pubgoal.path.header.frame_id = goal.path.header.frame_id
-
-    for i, pose in enumerate(goal.path.poses):
-        if i % 20 == 0:
-            pubgoal.path.poses.append(pose)
-
-    if pubgoal.path.poses and pubgoal.path.poses[-1] != goal.path.poses[-1]:
-        pubgoal.path.poses.append(goal.path.poses[-1])
-
-    return pubgoal
 
 def getSeq(octomap):
     return octomap.header.seq

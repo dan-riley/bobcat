@@ -2,6 +2,7 @@
 <launch>
   <arg name="vehicle" default="X1" />
   <arg name="type" default="robot" />
+  <arg name="sharePoseGraph" default="true" />
   <!-- No need to send images in virtual unless testing -->
   <arg name="sendImages" default="false" />
   <!-- If ack's are reliable, set this larger.  If a lot are dropped, set small. -->
@@ -32,6 +33,7 @@
 
     <arg name="vehicle" value="$(arg vehicle)" />
     <arg name="type" value="$(arg type)" />
+    <arg name="sharePoseGraph" value="$(arg sharePoseGraph)" />
     <arg name="sendImages" value="$(arg sendImages)" />
     <arg name="fuseDist" value="$(arg fuseDist)" />
     <arg name="singleGoalDeconflict" value="$(arg singleGoalDeconflict)" />

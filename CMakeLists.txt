@@ -24,7 +24,10 @@ add_message_files(
   ArtifactScore.msg
   NeighborMsg.msg
   Goal.msg
+  GoalCompressed.msg
   GoalArray.msg
+  PointArray.msg
+  PointArrays.msg
   DMReq.msg
   DMReqArray.msg
   DMResp.msg

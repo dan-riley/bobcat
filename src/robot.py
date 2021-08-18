@@ -149,6 +149,8 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         self.BeaconMonitor()
         if self.reverseDropEnable:
             self.ReverseDropMonitor()
+        if self.sharePoseGraph:
+            self.PoseGraphMonitor()
         self.ArtifactMonitor()
         self.GUIMonitor()
         ### End Monitor updates ###

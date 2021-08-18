@@ -1,13 +1,15 @@
 string id
 string cid
 string status
+float32 battery
 std_msgs/Time guiStamp
 string guiTaskName
 string guiTaskValue
 geometry_msgs/PoseStamped guiGoalPoint
-nav_msgs/Odometry odometry
-Goal goal
+geometry_msgs/PoseStamped odometry
+GoalCompressed goal
 AgentReset reset
 uint16 numDiffs
+uint16 latestPoseGraph
 marble_artifact_detection_msgs/ArtifactArray newArtifacts
 std_msgs/Time lastMessage

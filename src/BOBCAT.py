@@ -2,7 +2,10 @@
 from __future__ import print_function
 import rospy
 import copy
+import tf2_ros
+import tf2_geometry_msgs
 
+from std_msgs.msg import Float32
 from std_msgs.msg import Bool
 from std_msgs.msg import String
 from nav_msgs.msg import Odometry
@@ -15,6 +18,8 @@ from bobcat.msg import NeighborMsg
 from bobcat.msg import CommsCheckArray
 from bobcat.msg import Beacon
 from bobcat.msg import GoalArray
+from bobcat.msg import PointArray
+from bobcat.msg import PointArrays
 from bobcat.msg import DMReq
 from bobcat.msg import DMReqArray
 from bobcat.msg import DMResp
@@ -22,7 +27,7 @@ from bobcat.msg import DMRespArray
 from marble_mapping.msg import OctomapArray
 from marble_mapping.msg import OctomapNeighbors
 
-from util.helpers import getDist, getDist2D, subsample, getSeq
+from util.helpers import getDist, getDist2D, getAngle, getSeq
 from containers import Agent, Base, BeaconObj, ArtifactReport
 
 
@@ -41,6 +46,8 @@ class BOBCAT(object):
         self.useSimComms = rospy.get_param('bobcat/simcomms', False)
         # Whether to run the agent without a base station (comms always true)
         self.solo = rospy.get_param('bobcat/solo', False)
+        # Whether we're sharing our pose graph
+        self.sharePoseGraph = rospy.get_param('bobcat/sharePoseGraph', False)
         # Whether to include images in reports at all (disable for low bandwidth!)
         self.sendImages = rospy.get_param('bobcat/sendImages', True)
         # Whether to ensure images are sent with artifacts to decide whether reporting is complete
@@ -59,8 +66,11 @@ class BOBCAT(object):
         self.myBeacons = rospy.get_param('bobcat/myBeacons', '').split(',')
         self.numBeacons = len(self.myBeacons) if self.myBeacons[0] != '' else 0
         self.smartBeacons = rospy.get_param('bobcat/smartBeacons', True)
-        # Whether to subsample paths or not, if the planner uses high density paths
-        self.subsamplePaths = rospy.get_param('bobcat/subsample', False)
+        # Subsampling parameters for various paths.  Set distance to 0 for no subsampling.
+        self.ssDistanceGoalPath = rospy.get_param('bobcat/subsampleDistanceGoalPath', 0)
+        self.ssAngleGoalPath = rospy.get_param('bobcat/subsampleAngleGoalPath', 0)
+        self.ssDistancePoseGraph = rospy.get_param('bobcat/subsampleDistancePoseGraph', 0)
+        self.ssAnglePoseGraph = rospy.get_param('bobcat/subsampleAnglePoseGraph', 0)
         # Topics for publishers
         self.pubTopic = rospy.get_param('bobcat/pubTopic', 'ma_data')
         self.commTopic = rospy.get_param('bobcat/commTopic', 'mesh_comm')
@@ -75,7 +85,7 @@ class BOBCAT(object):
         topics['mapDiffs'] = rospy.get_param('bobcat/mapDiffsTopic', 'map_diffs')
         topics['node'] = rospy.get_param('bobcat/nodeTopic', 'at_node_center')
         topics['artifacts'] = rospy.get_param('bobcat/artifactsTopic', 'artifact_array/relay')
-        topics['artifactImages'] = rospy.get_param('bobcat/artifactImagesTopic', 'artifact_image_to_base')
+        topics['poseGraph'] = rospy.get_param('bobcat/poseGraphTopic', 'lio_sam/mapping/path')
 
         if not self.sendImages:
             self.reportImages = False
@@ -96,6 +106,8 @@ class BOBCAT(object):
         self.wait = False  # Change to True to wait for Origin Detection
         self.commListen = False
         self.artifactsUpdated = False
+        self.updateMapDiffsArray = False
+        self.updatePoseGraphArray = False
         self.lastDMReq = rospy.Time()
         self.dmReqs = []
 
@@ -150,6 +162,17 @@ class BOBCAT(object):
         # Publisher for the packaged data
         self.data_pub = rospy.Publisher(self.broadcastPubTopic, AgentMsg, queue_size=1)
 
+        if self.sharePoseGraph:
+            self.lastPoseGraphTime = rospy.Time()
+            # Use a TF buffer server to reduce cpu usage
+            self.tf_client = tf2_ros.BufferClient('tf2_buffer_server')
+            self.tf_client.wait_for_server()
+
+            # Pose Graph republisher after subsample and transform
+            self.pose_graph_pub = rospy.Publisher('pose_graph_subsampled', Path, latch=True, queue_size=1)
+            # Array of pose graphs for planner deconfliction
+            self.pose_graph_array_pub = rospy.Publisher('pose_graph_array', PointArrays, latch=True, queue_size=1)
+
     ##### Start Local Message Aggregation #####
     def DataListener(self, topics):
         """ Listens to all of the applicable topics and repackages into a single object """
@@ -176,6 +199,9 @@ class BOBCAT(object):
             self.mapdiffs_sub = \
                 rospy.Subscriber('/' + self.id + '/' + topics['mapDiffs'],
                                  OctomapArray, self.Receiver, 'mapDiffs')
+            self.posegraph_sub = \
+                rospy.Subscriber('/' + self.id + '/' + topics['poseGraph'],
+                                 Path, self.Receiver, 'poseGraph')
 
     def Receiver(self, data, parameter):
         setattr(self.agent, parameter, data)
@@ -213,12 +239,16 @@ class BOBCAT(object):
                 rospy.Publisher(topic + 'status', String, queue_size=10)
             self.viz[nid]['incomm'] = \
                 rospy.Publisher(topic + 'incomm', Bool, queue_size=10)
+            self.viz[nid]['battery'] = \
+                rospy.Publisher(topic + 'battery', Float32, queue_size=10)
             self.viz[nid]['odometry'] = \
                 rospy.Publisher(topic + 'odometry', Odometry, queue_size=10)
             self.viz[nid]['goal'] = \
                 rospy.Publisher(topic + 'goal', PoseStamped, queue_size=10)
             self.viz[nid]['path'] = \
                 rospy.Publisher(topic + 'path', Path, queue_size=10)
+            self.viz[nid]['poseGraph'] = \
+                rospy.Publisher(topic + 'pose_graph', Path, queue_size=10)
             self.viz[nid]['artifacts'] = \
                 rospy.Publisher(topic + 'artifacts', ArtifactArray, queue_size=10)
             self.viz[nid]['guiTaskNameReceived'] = \
@@ -259,6 +289,7 @@ class BOBCAT(object):
         for neighbor in self.neighbors.values():
             self.viz[neighbor.id]['status'].publish(neighbor.status)
             self.viz[neighbor.id]['incomm'].publish(neighbor.incomm)
+            self.viz[neighbor.id]['battery'].publish(neighbor.battery)
             self.viz[neighbor.id]['guiTaskNameReceived'].publish(neighbor.guiTaskName)
             self.viz[neighbor.id]['guiTaskValueReceived'].publish(neighbor.guiTaskValue)
             # Don't publish if the robot hasn't initialized odometry
@@ -267,6 +298,7 @@ class BOBCAT(object):
                 self.viz[neighbor.id]['odometry'].publish(neighbor.odometry)
                 self.viz[neighbor.id]['goal'].publish(neighbor.goal.pose)
                 self.viz[neighbor.id]['path'].publish(neighbor.goal.path)
+                self.viz[neighbor.id]['poseGraph'].publish(neighbor.poseGraph)
                 self.viz[neighbor.id]['artifacts'].publish(neighbor.checkArtifacts)
         for artifact in self.artifacts.values():
             if artifact.image.artifact_img.data and rospy.get_rostime() - artifact.lastPublished > rospy.Duration(60) and artifact.agent_id != self.id:
@@ -279,19 +311,29 @@ class BOBCAT(object):
     def buildAgentMessage(self, msg, agent):
         msg.id = agent.id
         msg.cid = agent.cid
+        msg.battery = agent.battery
         msg.guiStamp.data = agent.guiStamp
         msg.guiTaskName = agent.guiTaskName
         msg.guiTaskValue = agent.guiTaskValue
         msg.guiGoalPoint = agent.guiGoalPoint
-        msg.odometry = agent.odometry
+        msg.latestPoseGraph = agent.latestPoseGraph
         msg.lastMessage.data = agent.lastMessage
-        msg.goal = subsample(agent.goal) if self.subsamplePaths else agent.goal
         msg.reset = agent.reset
 
-        # Need to clear any image data.  Will be overwritten by subscriber if done elswhere
-        msg.newArtifacts = copy.deepcopy(agent.checkArtifacts)
-        for artifact in msg.newArtifacts.artifacts:
-            artifact.image_data.data = []
+        # Extract just the pose for odometry
+        msg.odometry.header = agent.odometry.header
+        msg.odometry.pose = agent.odometry.pose.pose
+
+        # Only publish artifacts if we have a new one, or three times every 30 seconds
+        curtime = rospy.get_rostime()
+        if (self.agent.lastArtifact != self.base.lastArtifact or
+                curtime > agent.lastArtifactPub + rospy.Duration(30)):
+            if curtime > agent.lastArtifactPub + rospy.Duration(33):
+                agent.lastArtifactPub = curtime;
+            msg.newArtifacts = copy.deepcopy(agent.checkArtifacts)
+            # Need to clear any image data.  Will be overwritten by subscriber if done elswhere
+            for artifact in msg.newArtifacts.artifacts:
+                artifact.image_data.data = []
 
         # Data that's only sent via direct comms
         if agent.id == self.id:
@@ -301,9 +343,67 @@ class BOBCAT(object):
             msg.baseArtifacts = self.base.baseArtifacts
             msg.commBeacons.data = self.beaconsArray
             msg.numDiffs = agent.mapDiffs.num_octomaps
+            # Build the goal message.  Message type is compressed so have to assign separately.
+            msg.goal.cost = agent.goal.cost
+            msg.goal.path = self.compressPath(agent.goal.path, self.ssDistanceGoalPath, self.ssAngleGoalPath, False)
         else:
             msg.status = agent.status
             msg.numDiffs = agent.numDiffs
+            msg.goal = agent.goalCompressed
+
+    def transformPose(self, pose):
+        try:
+            pose.header.stamp = rospy.Time(0)
+            return self.tf_client.transform(pose, "world", rospy.Duration(1))
+        except tf2_ros.LookupException, tf2_ros.ExtrapolationException:
+            return
+
+    def addPoseToPaths(self, pose, path, cpath):
+        # Pose is not mutable so won't be changed.  Path and cpath are changed/returned.
+        if pose.header.frame_id != 'world':
+            pose = self.transformPose(pose)
+        path.poses.append(pose)
+        cpath.append(10 * pose.pose.position.x)
+        cpath.append(10 * pose.pose.position.y)
+        cpath.append(10 * pose.pose.position.z)
+
+    def compressPath(self, path, distance, angle, poseGraph):
+        # Subsample a path based on distance/angle, transform to world, and compress
+        cpath = []
+        if len(path.poses) == 0:
+            return cpath
+
+        pubpath = Path()
+        pubpath.header.frame_id = 'world'
+
+        # Get the first pose and add to our data
+        pivot = path.poses[0]
+        self.addPoseToPaths(pivot, pubpath, cpath)
+        lastp = path.poses[0].pose.position
+
+        for pose in path.poses:
+            nextp = pose.pose.position
+            # Make sure the point is at least min distance, and there's been a change in direction
+            if (getDist(lastp, pivot.pose.position) > distance):
+                if (getAngle(lastp, pivot.pose.position, nextp) > angle):
+                    self.addPoseToPaths(pivot, pubpath, cpath)
+                    lastp = pivot.pose.position
+
+            pivot = pose
+
+        # Make sure the end point is in the path
+        # Need to transform first if it's not since pubpath.poses are
+        if pivot.header.frame_id != 'world':
+            pivot = self.transformPose(pivot)
+        if pubpath.poses[-1] != pivot:
+            self.addPoseToPaths(pivot, pubpath, cpath)
+
+        if poseGraph:
+            self.agent.latestPoseGraph += 1
+            pubpath.header.seq = self.agent.latestPoseGraph
+            self.pose_graph_pub.publish(pubpath)
+
+        return cpath
     ##### Stop Output Aggregation #####
 
     ##### Start Communications Handling #####
@@ -414,6 +514,12 @@ class BOBCAT(object):
 
                     notDirectComm = self.neighbors[neighbor2.id].cid != self.id
                     incomm = self.neighbors[neighbor2.id].incomm
+
+                    # We might have gotten empty artifacts on previous versions of this
+                    if not newerMessage:
+                        newerMessage = (neighbor2.lastMessage.data ==
+                                        self.neighbors[neighbor2.id].lastMessage and
+                                        neighbor2.newArtifacts.artifacts)
 
                     if (newerMessage and (notDirectComm or not incomm)):
                         self.neighbors[neighbor2.id].update(neighbor2)
@@ -539,6 +645,23 @@ class BOBCAT(object):
                         nresp.id = agent.id
                     break
 
+    def addPoseGraph(self, nid, nresp, agent):
+        if agent.missingPoseGraph:
+            # Find the right pose graph or return if we don't have it
+            if agent.id == self.id:
+                poseGraph = self.agent.poseGraphCompressed
+                latestPoseGraph = self.agent.latestPoseGraph
+            elif self.neighbors[agent.id].latestPoseGraphAvailable >= agent.missingPoseGraph:
+                poseGraph = self.neighbors[agent.id].poseGraphCompressed
+                latestPoseGraph = self.neighbors[agent.id].latestPoseGraphAvailable
+            else:
+                return
+
+            nresp.poseGraph = poseGraph
+            nresp.latestPoseGraph = latestPoseGraph
+            if self.dmSplit:
+                self.dmResp_pub[nid].publish([nresp])
+
     def DMRequestReceiever(self, req, nid):
         # TODO add a time check so we don't try to send again if we already sent recently,
         # as the comms client may be trying to take care of the resend
@@ -553,6 +676,7 @@ class BOBCAT(object):
 
             self.addMapDiffs(nid, nresp, agent)
             self.addImages(nid, nresp, agent)
+            self.addPoseGraph(nid, nresp, agent)
             if not self.dmSplit:
                 resp.append(nresp)
 
@@ -569,6 +693,7 @@ class BOBCAT(object):
                 neighbor.mapDiffs.octomaps.append(octomap)
                 neighbor.mapDiffs.num_octomaps += 1
                 neighbor.updateMapDiffs = True
+                self.updateMapDiffsArray = True
                 # Remove the received diffs, in case we didn't get all of them
                 if octomap.header.seq in neighbor.missingDiffs:
                     neighbor.missingDiffs.remove(octomap.header.seq)
@@ -600,6 +725,14 @@ class BOBCAT(object):
                         receivedDM = True
                         break
 
+            if agent.poseGraph and agent.latestPoseGraph > neighbor.latestPoseGraphAvailable:
+                neighbor.poseGraphCompressed = agent.poseGraph
+                neighbor.poseGraph = neighbor.decompressPath(agent.poseGraph)
+                neighbor.latestPoseGraphAvailable = agent.latestPoseGraph
+                neighbor.missingPoseGraph = False
+                self.updatePoseGraphArray = True
+                receivedDM = True
+
         # Clear out the request log so we don't skip any
         if receivedDM:
             self.lastDMReq = rospy.get_rostime() - self.dmWait
@@ -627,6 +760,10 @@ class BOBCAT(object):
             # Look for missing images and add to request
             if neighbor.missingImages:
                 req.missingImages = neighbor.missingImages
+                addRequest = True
+
+            if neighbor.latestPoseGraph > neighbor.latestPoseGraphAvailable:
+                req.missingPoseGraph = neighbor.latestPoseGraphAvailable + 1
                 addRequest = True
 
             if addRequest:
@@ -800,6 +937,7 @@ class BOBCAT(object):
             pubData = AgentMsg()
             self.buildAgentMessage(pubData, self.agent)
             neighbor_diffs = OctomapNeighbors()
+            pgarray = PointArrays()
             pubMapDiffs = False
             for neighbor in self.neighbors.values():
                 # Check this neighbor to see if anything should be reset
@@ -808,29 +946,47 @@ class BOBCAT(object):
                 self.buildAgentMessage(msg, neighbor)
                 pubData.neighbors.append(msg)
 
-                # Get all of the map diffs to publish for the merger
-                neighbor_diffs.neighbors.append(neighbor.mapDiffs)
-                neighbor_diffs.num_neighbors += 1
+                # Only build the array if we have an update
+                if self.updateMapDiffsArray or neighbor.diffClear:
+                    # Get all of the map diffs to publish for the merger
+                    neighbor_diffs.neighbors.append(neighbor.mapDiffs)
+                    neighbor_diffs.num_neighbors += 1
 
-                # Only publish if we have new diffs or we've removed some
-                if neighbor.updateMapDiffs or neighbor.diffClear:
-                    neighbor.updateMapDiffs = False
-                    pubMapDiffs = True
+                    # Only publish if we have new diffs or we've removed some
+                    if neighbor.updateMapDiffs or neighbor.diffClear:
+                        neighbor.updateMapDiffs = False
+                        pubMapDiffs = True
 
-                    if neighbor.diffClear:
-                        neighbor_diffs.clear = True
-                        neighbor.diffClear = False
+                        if neighbor.diffClear:
+                            neighbor_diffs.clear = True
+                            neighbor.diffClear = False
 
+                if self.sharePoseGraph and self.updatePoseGraphArray:
+                    points = PointArray()
+                    for pose in neighbor.poseGraph.poses:
+                        points.points.append(pose.pose.position)
+                    pgarray.arrays.append(points)
+
+            # Regular multi-agent data
             pubData.header.stamp = rospy.get_rostime()
             self.data_pub.publish(pubData)
+
+            # Neighbor maps for local map merging
             if pubMapDiffs or hardReset:
                 if hardReset:
                     # Only pass hardReset for resetting self map!
                     neighbor_diffs.hardReset = True
                     neighbor_diffs.clear = True
+                self.updateMapDiffsArray = False
                 neighbor_diffs.header.stamp = rospy.get_rostime()
                 self.neighbor_maps_pub.publish(neighbor_diffs)
 
+            # Pose graph array for local planner
+            if self.sharePoseGraph and self.updatePoseGraphArray:
+                self.updatePoseGraphArray = False
+                self.pose_graph_array_pub.publish(pgarray)
+
+            # Visualizations
             if self.useViz:
                 self.publishViz()
 

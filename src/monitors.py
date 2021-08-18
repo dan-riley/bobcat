@@ -7,6 +7,8 @@ from std_msgs.msg import Bool
 from std_msgs.msg import String
 from geometry_msgs.msg import Point
 from marble_origin_detection_msgs.msg import OriginDetectionStatus
+from estop_msgs.msg import BaseStatus
+from sensor_msgs.msg import BatteryState
 
 from util.helpers import getDist, getYaw, averagePose, averagePosition, angleDiff
 
@@ -78,6 +80,10 @@ class BCMonitors():
         self.input_sub = rospy.Subscriber('forceTask', String, self.InputMonitor)
         self.planner_sub = rospy.Subscriber('planner_status', Bool, self.PlannerMonitor)
         self.launch_sub = rospy.Subscriber('velocity_controller/enable', Bool, self.LaunchMonitor)
+        if self.useSimComms or self.useVirtual:
+            self.battery_sub = rospy.Subscriber('battery_state', BatteryState, self.BatterySimMonitor)
+        else:
+            self.battery_sub = rospy.Subscriber('base_status', BaseStatus, self.BatteryMonitor)
 
     def WaitMonitor(self, data):
         if data.status > 0:
@@ -121,6 +127,19 @@ class BCMonitors():
         self.isAerial = True
         self.launch_status = data.data
 
+    def PoseGraphMonitor(self):
+        if rospy.get_rostime() > self.lastPoseGraphTime + rospy.Duration(15):
+            # Save the time
+            self.lastPoseGraphTime = rospy.get_rostime()
+            # Get our subsampled and compressed path to save for transmission
+            self.agent.poseGraphCompressed = self.compressPath(self.agent.poseGraph, self.ssDistancePoseGraph, self.ssAnglePoseGraph, True)
+
+    def BatteryMonitor(self, data):
+        self.agent.battery = min(data.vbat)
+
+    def BatterySimMonitor(self, data):
+        self.agent.battery = data.voltage
+
     def beaconDistCheck(self, pose, checkDist, dropBeacon):
         numBeacons = 0
         numDistBeacons = 0
@@ -155,7 +174,7 @@ class BCMonitors():
         if self.checkReverse and not self.base.incomm and not self.reverseDrop:
             self.beaconCommLost += 1
             # If we're not talking to the base station, attempt to reverse drop
-            if self.beaconCommLost > 5:
+            if self.beaconCommLost > 10:
                 self.reverseDrop = True
                 # Check if we've already attempted a reverse drop in this area
                 # Sometimes there are deadzones and this can cause a loop if not accounted for
@@ -277,10 +296,11 @@ class BCMonitors():
         # Identify our report so we can track that the base station has seen it
         if self.numNewArtifacts:
             # Make sure we have enough new artifacts OR enough time has passed
-            # Consider making this an Objective evaluation to scale as we get more
+            # Always report once the robot has been running for 45 minutes
             if ((self.numNewArtifacts >= self.maxNewArtifacts) or
-                 (rospy.get_rostime() >
-                  self.newArtifactTime + rospy.Duration(self.maxReportTime))):
+                (rospy.get_rostime() >
+                 self.newArtifactTime + rospy.Duration(self.maxReportTime)) or
+                (rospy.get_rostime() > self.start_time + rospy.Duration(2700))):
                 self.report = True
 
             # Once we see the base has our latest artifact report we can stop going home
