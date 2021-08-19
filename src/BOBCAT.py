@@ -11,6 +11,7 @@ from std_msgs.msg import String
 from nav_msgs.msg import Odometry
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import TransformStamped
 from marble_artifact_detection_msgs.msg import ArtifactArray
 from marble_artifact_detection_msgs.msg import ArtifactImg
 from bobcat.msg import AgentMsg
@@ -108,6 +109,7 @@ class BOBCAT(object):
         self.artifactsUpdated = False
         self.updateMapDiffsArray = False
         self.updatePoseGraphArray = False
+        self.pathTransform = TransformStamped()
         self.lastDMReq = rospy.Time()
         self.dmReqs = []
 
@@ -351,17 +353,10 @@ class BOBCAT(object):
             msg.numDiffs = agent.numDiffs
             msg.goal = agent.goalCompressed
 
-    def transformPose(self, pose):
-        try:
-            pose.header.stamp = rospy.Time(0)
-            return self.tf_client.transform(pose, "world", rospy.Duration(1))
-        except tf2_ros.LookupException, tf2_ros.ExtrapolationException:
-            return
-
     def addPoseToPaths(self, pose, path, cpath):
         # Pose is not mutable so won't be changed.  Path and cpath are changed/returned.
         if pose.header.frame_id != 'world':
-            pose = self.transformPose(pose)
+            pose = tf2_geometry_msgs.do_transform_pose(pose, self.pathTransform)
         path.poses.append(pose)
         cpath.append(10 * pose.pose.position.x)
         cpath.append(10 * pose.pose.position.y)
@@ -372,6 +367,13 @@ class BOBCAT(object):
         cpath = []
         if len(path.poses) == 0:
             return cpath
+
+        # If the path isn't in world, try to get a TF.  If we can't then return empty
+        if path.header.frame_id != 'world':
+            try:
+                self.pathTransform = self.tf_client.lookup_transform('world', path.header.frame_id, rospy.Time(0), rospy.Duration(1))
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException):
+                return cpath
 
         pubpath = Path()
         pubpath.header.frame_id = 'world'
@@ -394,7 +396,7 @@ class BOBCAT(object):
         # Make sure the end point is in the path
         # Need to transform first if it's not since pubpath.poses are
         if pivot.header.frame_id != 'world':
-            pivot = self.transformPose(pivot)
+            pivot = tf2_geometry_msgs.do_transform_pose(pivot, self.pathTransform)
         if pubpath.poses[-1] != pivot:
             self.addPoseToPaths(pivot, pubpath, cpath)
 
@@ -552,10 +554,11 @@ class BOBCAT(object):
             rospy.loginfo(self.id + ' resetting data for ' + nid)
             self.neighbors[nid].resetStamp = data.stamp
             self.neighbors[nid].diffClear = data.clear
+            self.updateMapDiffsArray = True
 
             if data.ma_reset:
                 # Reset the agent's multiagent data
-                self.neighbors[nid].initialize(data.stamp)
+                self.neighbors[nid].initialize(data.stamp, True)
                 self.base.resetArtifact(nid)
                 # Remove this agent's artifacts from our list
                 for key in [key for key in self.artifacts if self.artifacts[key].agent_id == nid]:
@@ -590,12 +593,12 @@ class BOBCAT(object):
             rospy.loginfo(self.id + ' hard resetting!')
             # If ma_reset true then re-initialize everything
             if reset.ma_reset:
-                self.agent.initialize(reset.stamp)
+                self.agent.initialize(reset.stamp, True)
                 self.base.resetArtifact(self.id)
                 self.artifacts = {}
                 self.reset_pub.publish(True)
                 for neighbor in self.neighbors.values():
-                    neighbor.initialize()
+                    neighbor.initialize(rospy.get_rostime())
             else:
                 self.agent.resetStamp = reset.stamp
 
@@ -604,6 +607,7 @@ class BOBCAT(object):
             for neighbor in self.neighbors.values():
                 neighbor.initializeMaps(0, True)
 
+            self.updateMapDiffsArray = True
             return True
 
         return False
@@ -947,7 +951,7 @@ class BOBCAT(object):
                 pubData.neighbors.append(msg)
 
                 # Only build the array if we have an update
-                if self.updateMapDiffsArray or neighbor.diffClear:
+                if self.updateMapDiffsArray:
                     # Get all of the map diffs to publish for the merger
                     neighbor_diffs.neighbors.append(neighbor.mapDiffs)
                     neighbor_diffs.num_neighbors += 1

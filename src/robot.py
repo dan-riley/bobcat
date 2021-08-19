@@ -25,8 +25,6 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         self.commListen = True
         self.debugWeights = False
         self.lastBehavior = None
-        self.lastReplanGoal = None
-        self.lastReplanTime = rospy.get_rostime()
 
         # Initialize all of the BOBCAT modules
         BCMonitors.__init__(self)

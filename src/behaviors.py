@@ -142,64 +142,7 @@ class Explore(DefaultBehavior):
         self.score = self.a.objectives['explore'].weight
 
     def execute(self):
-        # Explore with goal deconfliction
-        self.a.stopStart = True
-        # Reduce all the redundant explore messages
-        if self.a.agent.status != 'Explore':
-            self.a.move()
-            self.a.agent.status = 'Explore'
-            self.a.home_pub.publish(False)
-            self.a.task_pub.publish(self.a.agent.status)
-
-        # Find the best goal point to go to, unless we need a blacklist replan
-        if not self.a.blacklistUpdated:
-            self.a.deconflictGoals()
-
-        # If a replan was requested somewhere, trigger it, unless we already asked recently
-        alreadyReplanned = False
-        if ((self.a.lastReplanTime + rospy.Duration(self.a.stopCheck) > rospy.get_rostime() or
-                self.a.lastReplanGoal != self.a.agent.exploreGoal) and
-                (self.a.replan or self.a.blacklistUpdated)):
-            alreadyReplanned = True
-            self.a.lastReplanGoal = self.a.agent.exploreGoal
-            self.a.lastReplanTime = rospy.get_rostime()
-            self.a.updateStatus('Replanning')
-            rospy.loginfo(self.a.id + ' requesting replan')
-            if self.a.blacklistUpdated:
-                self.a.task_pub.publish('unstuck')
-            else:
-                self.a.task_pub.publish(self.a.replanCommand)
-                self.a.replan = False
-
-        # If the planner can't plan, and we've reached the previous goal, or are stuck,
-        # switch to trajectory follower to go towards home
-        if self.a.useTraj or (not self.a.planner_status and (self.a.stuck > self.a.stopCheck or
-                getDist(self.a.agent.goal.pose.pose.position,
-                        self.a.agent.odometry.pose.pose.position) < 1.0)):
-            # Try to get the planner to replan
-            if not alreadyReplanned:
-                self.a.task_pub.publish(self.a.replanCommand)
-            if self.a.useExtTraj:
-                self.a.updateStatus('Following Trajectory')
-                rospy.loginfo(self.a.id + ' using trajectory follower during explore')
-                self.a.traj_pub.publish(True)
-            # Stop using the old goal and path or else we'll get stuck in a loop
-            self.a.agent.goal.pose = self.a.agent.exploreGoal
-            self.a.agent.goal.path = self.a.agent.explorePath
-
-            # If we're stuck, with no plan, but we've reached the end of the path, blacklist this
-            if len(self.a.agent.goal.path.poses) > 0:
-                pathend = self.a.agent.goal.path.poses[-1].pose.position
-                if (not self.a.planner_status and getDist(pathend,
-                        self.a.agent.odometry.pose.pose.position) < 1.0):
-                   self.a.addBlacklist(pathend)
-        else:
-            self.a.traj_pub.publish(False)
-
-        # Publish the selected goal and path for the guidance controller
-        self.a.goal_pub.publish(self.a.agent.goal.pose)
-        if self.a.agent.goal.path.header.frame_id != 'starting':
-            self.a.path_pub.publish(self.a.agent.goal.path)
+        self.a.explore()
 
 
 class GoToGoal(DefaultBehavior):

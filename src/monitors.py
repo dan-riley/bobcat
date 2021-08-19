@@ -83,7 +83,7 @@ class BCMonitors():
         if self.useSimComms or self.useVirtual:
             self.battery_sub = rospy.Subscriber('battery_state', BatteryState, self.BatterySimMonitor)
         else:
-            self.battery_sub = rospy.Subscriber('base_status', BaseStatus, self.BatteryMonitor)
+            self.battery_sub = rospy.Subscriber('base_state', BaseStatus, self.BatteryMonitor)
 
     def WaitMonitor(self, data):
         if data.status > 0:
@@ -128,14 +128,14 @@ class BCMonitors():
         self.launch_status = data.data
 
     def PoseGraphMonitor(self):
-        if rospy.get_rostime() > self.lastPoseGraphTime + rospy.Duration(15):
+        if rospy.get_rostime() > self.lastPoseGraphTime + rospy.Duration(10):
             # Save the time
             self.lastPoseGraphTime = rospy.get_rostime()
             # Get our subsampled and compressed path to save for transmission
             self.agent.poseGraphCompressed = self.compressPath(self.agent.poseGraph, self.ssDistancePoseGraph, self.ssAnglePoseGraph, True)
 
     def BatteryMonitor(self, data):
-        self.agent.battery = min(data.vbat)
+        self.agent.battery = min(x for x in data.vbat if x > 10)
 
     def BatterySimMonitor(self, data):
         self.agent.battery = data.voltage
@@ -359,7 +359,7 @@ class BCMonitors():
                             self.blgoals = []
 
                     # Tell the planner to replan and blacklist
-                    self.blacklistUpdated = True
+                    self.blacklistUpdated = 'newBlacklist'
 
                 self.updateStatus('Stuck')
                 rospy.loginfo(self.id + ' has not moved!')
@@ -376,7 +376,7 @@ class BCMonitors():
                 if self.agent.guiTaskValue == 'Explore' or self.agent.guiTaskValue == 'Start':
                     # Request a new goal from the planner if we were already exploring
                     if self.guiBehavior == None:
-                        self.replan = True
+                        self.replan = 'gui'
                     # Since Explore is the default behavior, these commands just reset the
                     # robot to normal autonomous mode
                     self.guiBehavior = None

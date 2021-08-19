@@ -28,21 +28,20 @@ class Agent(object):
         self.type = agent_type
         self.reset = AgentReset()
         self.reportImages = report_images
-        self.lastMessage = rospy.get_rostime()
-        self.lastDirectMessage = self.lastMessage
         self.incomm = True
         self.simcomm = True
-        self.initialize()
+        self.initialize(rospy.get_rostime())
         self.initializeMaps()
 
         # Initialize our empty path so guidance controller can ignore it
         if (self.id == self.pid):
             self.explorePath.header.frame_id = 'starting'
 
-    def initialize(self, resetTime=rospy.Time()):
+    # On first init need set reset to now so we don't accept old reset messages
+    def initialize(self, resetTime, resetAgent=False):
         self.status = ''
         self.battery = 0
-        self.guiStamp = rospy.get_rostime()
+        self.guiStamp = rospy.Time()
         self.guiTaskName = ''
         self.guiTaskValue = ''
         self.guiGoalPoint = PoseStamped()
@@ -68,11 +67,10 @@ class Agent(object):
         self.missingImages = []
         self.lastArtifact = ''
         self.lastArtifactPub = rospy.Time();
+        self.lastMessage = rospy.Time()
+        self.lastDirectMessage = self.lastMessage
         self.resetStamp = resetTime
-        if resetTime:
-            self.resetAgent = True
-        else:
-            self.resetAgent = False
+        self.resetAgent = resetAgent
 
     def initializeMaps(self, numDiffs=0, diffClear=False):
         self.mapDiffs = OctomapArray()
@@ -199,8 +197,8 @@ class Base(object):
     """ Data structure to hold pertinent information about the base station """
 
     def __init__(self):
-        self.baseStamp = rospy.get_rostime()
-        self.lastMessage = rospy.get_rostime()
+        self.baseStamp = rospy.Time()
+        self.lastMessage = rospy.Time()
         self.lastDirectMessage = self.lastMessage
         self.lastArtifact = ''
         self.incomm = True
@@ -235,7 +233,7 @@ class BeaconObj(object):
         self.id = agent
         self.owner = owner
         self.pos = Point()
-        self.lastMessage = rospy.get_rostime()
+        self.lastMessage = rospy.Time()
         self.lastDirectMessage = self.lastMessage
         self.incomm = False
         self.simcomm = False
