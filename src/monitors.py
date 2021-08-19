@@ -70,6 +70,7 @@ class BCMonitors():
         self.blacklistUpdated = False
         self.guiBehavior = 'stop' # Start the robot in stop mode
         self.lastGuiBehavior = None
+        self.nearbyRobot = False
 
         # Subscribers for some Monitors
         waitTopic = rospy.get_param('bobcat/waitTopic', 'origin_detection_status')
@@ -351,8 +352,8 @@ class BCMonitors():
                     if len(newgoals) > self.hislen / 2:
                         avgGoal = averagePosition(newgoals)
 
-                        # Make sure it's not the origin and we're not already close to the goal
-                        if (not (avgGoal.x == 0 and avgGoal.y == 0) and
+                        # Make sure we're exploring and we're not already close to the goal
+                        if (self.lastBehavior.name == 'Explore' and
                                 getDist(self.agent.odometry.pose.pose.position,
                                         self.agent.goal.pose.pose.position) > 0.5):
                             self.addBlacklist(avgGoal)
@@ -367,6 +368,22 @@ class BCMonitors():
         elif not self.agent.goal.path.poses:
             # Report no path available
             self.updateStatus('No Path')
+
+    def NeighborMonitor(self):
+        # Check if there's another robot close by and we should just stop until they're clear
+        self.nearbyRobot = False
+        curpos = self.agent.odometry.pose.pose.position
+        for neighbor in self.neighbors.values():
+            # Ignore the neighbor if we don't have current data, which should've come direct
+            if rospy.get_rostime() > neighbor.lastDirectMessage + rospy.Duration(5):
+                continue
+            npos = neighbor.odometry.pose.pose.position
+            # Check if we have a neighbor close by
+            if getDist(curpos, npos) < self.deconflictRadius:
+                # Check if we are closer to the starting point
+                if getDist(curpos, self.anchorPos) < getDist(npos, self.anchorPos):
+                    self.nearbyRobot = True
+                    break
 
     def GUIMonitor(self):
         # Manage the newest task sent

@@ -150,6 +150,10 @@ class BCActions():
             if not self.blacklistUpdated:
                 # Check each neighbors' goal for conflict
                 for neighbor in self.neighbors.values():
+                    # Ignore the neighbor if we don't have current data
+                    # Requires clocks to be relatively in-sync
+                    if rospy.get_rostime() > neighbor.lastMessage + rospy.Duration(15):
+                        continue
                     npos = neighbor.goal.pose.pose.position
                     nodom = neighbor.odometry.pose.pose.position
                     # Check whether they are within the defined range
@@ -200,6 +204,10 @@ class BCActions():
                         goodGoal = goals[i]
                     # Check each neighbors' goal for conflict
                     for neighbor in self.neighbors.values():
+                        # Ignore the neighbor if we don't have current data
+                        # Requires clocks to be relatively in-sync
+                        if rospy.get_rostime() > neighbor.lastMessage + rospy.Duration(15):
+                            continue
                         npos = neighbor.goal.pose.pose.position
                         # Check whether they are within the defined range
                         if getDist(gpos, npos) < self.deconflictRadius:
@@ -391,11 +399,12 @@ class BCActions():
         # Use the external trajectory follower to go home since planner refuses
         # Don't ask immediately for a replan, the command will be sent periodically
         # This allows us to move a bit before requesting the plan again
-        if not self.planner_status and reason != 'guiCommand' and not self.trajOn:
-            self.trajOn = True
-            self.traj_pub.publish(True)
-            self.updateStatus('Following Trajectory')
-            rospy.loginfo(self.id + ' using trajectory follower for home')
+        if not self.planner_status and reason != 'guiCommand':
+            if not self.trajOn:
+                self.trajOn = True
+                self.traj_pub.publish(True)
+                self.updateStatus('Following Trajectory')
+                rospy.loginfo(self.id + ' using trajectory follower for home')
         elif self.trajOn:
             self.trajOn = False
             self.traj_pub.publish(False)

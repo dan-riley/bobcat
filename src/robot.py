@@ -142,11 +142,13 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         ### End Message Aggregation ###
 
         ### Start Monitor updates ###
-        if self.startedMission and self.agent.status != 'Stop':
-            self.StuckMonitor()
-        self.BeaconMonitor()
-        if self.reverseDropEnable:
-            self.ReverseDropMonitor()
+        if self.startedMission:
+            self.NeighborMonitor()
+            self.BeaconMonitor()
+            if self.reverseDropEnable:
+                self.ReverseDropMonitor()
+            if self.agent.status != 'Stop':
+                self.StuckMonitor()
         if self.sharePoseGraph:
             self.PoseGraphMonitor()
         self.ArtifactMonitor()
@@ -184,11 +186,17 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
             if self.debugWeights:
                 rospy.loginfo(behavior.name + ' ' + str(behavior.score))
 
-        # Execute the chosen Behavior
+        # Execute the chosen Behavior, unless we need to wait for a neighbor to move
         if self.debugWeights:
             rospy.loginfo('')
             rospy.loginfo('executing ' + execBehavior.name)
-        self.lastBehavior = execBehavior
-        execBehavior.execute()
+
+        if self.nearbyRobot and execBehavior.name != 'Go Home':
+            self.behaviors['stop'].execute()
+            self.updateStatus('Waiting')
+            rospy.loginfo(self.id + ' waiting for neighbor to move...')
+        else:
+            self.lastBehavior = execBehavior
+            execBehavior.execute()
 
         return True
