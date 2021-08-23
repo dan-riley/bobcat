@@ -10,6 +10,7 @@ from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped
 from geometry_msgs.msg import Point
 from visualization_msgs.msg import Marker
+from bobcat.msg import BobcatStatus, Monitor, Objective, Behavior
 
 from util.helpers import getDist
 
@@ -35,6 +36,7 @@ class BCActions():
         self.singleGoalDeconflict = rospy.get_param('bobcat/singleGoalDeconflict', False)
         self.useExtTraj = rospy.get_param('bobcat/useExtTraj', False)
 
+        self.status_pub = rospy.Publisher('bobcat_status', BobcatStatus, latch=True, queue_size=1)
         self.task_pub = rospy.Publisher('task', String, queue_size=10, latch=True)
         self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
         self.deploy_breadcrumb_pub = rospy.Publisher('breadcrumb/deploy', Empty, queue_size=10)
@@ -408,3 +410,41 @@ class BCActions():
         elif self.trajOn:
             self.trajOn = False
             self.traj_pub.publish(False)
+
+    def buildMonitorStatus(self, status, name, value):
+        mon = Monitor()
+        mon.name = name
+        mon.status = value
+        status.monitors.append(mon)
+
+    def publishStatus(self, execBehavior):
+        status = BobcatStatus()
+        status.header.stamp = rospy.get_rostime()
+
+        # Build each monitor individually for now since they're not as easily looped
+        status.inputCommand = str(self.guiBehavior)
+        self.buildMonitorStatus(status, 'Artifact', self.report)
+        self.buildMonitorStatus(status, 'HumanInput', self.guiBehavior != None)
+        self.buildMonitorStatus(status, 'Comms', self.base.incomm)
+        self.buildMonitorStatus(status, 'DeployBeacon', self.deployBeacon)
+        self.buildMonitorStatus(status, 'ReverseDrop', self.reverseDrop)
+
+        # Get the objectives and behaviors
+        for objective in self.objectives.values():
+            obj = Objective()
+            obj.name = objective.name
+            obj.monitors = objective.monitors
+            obj.weight = objective.weight
+            status.objectives.append(obj)
+
+        for behavior in self.behaviors.values():
+            beh = Behavior()
+            beh.name = behavior.name
+            # Including the connections every message is overkill but also adds flexibility
+            beh.monitors = behavior.monitors
+            beh.objectives = behavior.objectives
+            beh.score = behavior.score
+            status.behaviors.append(beh)
+
+        status.execBehavior = execBehavior
+        self.status_pub.publish(status)

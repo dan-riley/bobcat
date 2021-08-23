@@ -25,7 +25,9 @@ class DefaultBehavior():
     def __init__(self, agent):
         self.a = agent
         self.score = 0
-        self.name = 'Default'
+        self.name = self.__class__.__name__
+        self.monitors = []
+        self.objectives = []
 
     def evaluate(self):
         return True
@@ -40,7 +42,8 @@ class DeployBeacon(DefaultBehavior):
 
     def __init__(self, agent):
         DefaultBehavior.__init__(self, agent)
-        self.name = 'Deploy Beacon'
+        self.monitors = ['ReverseDrop', 'HumanInput']
+        self.objectives = ['ExtendComms', 'Input']
 
     def evaluate(self):
         self.score = 0
@@ -136,7 +139,8 @@ class Explore(DefaultBehavior):
 
     def __init__(self, agent):
         DefaultBehavior.__init__(self, agent)
-        self.name = 'Explore'
+        self.monitors = ['HumanInput']  # Implict based on implementation
+        self.objectives = ['Explore']
 
     def evaluate(self):
         self.score = self.a.objectives['explore'].weight
@@ -149,7 +153,8 @@ class GoToGoal(DefaultBehavior):
 
     def __init__(self, agent):
         DefaultBehavior.__init__(self, agent)
-        self.name = 'Go to Goal'
+        self.monitors = ['HumanInput']
+        self.objectives = ['Input']
 
     def evaluate(self):
         self.score = 0
@@ -174,7 +179,8 @@ class GoHome(DefaultBehavior):
 
     def __init__(self, agent):
         DefaultBehavior.__init__(self, agent)
-        self.name = 'Go Home'
+        self.monitors = ['ReverseDrop', 'HumanInput']
+        self.objectives = ['MaintainComms', 'ExtendComms', 'ReportArtifacts', 'Input']
 
     def evaluate(self):
         # Reporting and Maintaining comms primarily drive this behavior
@@ -201,7 +207,8 @@ class Stop(DefaultBehavior):
 
     def __init__(self, agent):
         DefaultBehavior.__init__(self, agent)
-        self.name = 'Stop'
+        self.monitors = ['HumanInput']
+        self.objectives = ['Input']
 
     def evaluate(self):
         self.score = 0

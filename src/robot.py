@@ -162,7 +162,7 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         for objective in self.objectives.values():
             objective.evaluate()
             if self.debugWeights:
-                rospy.loginfo(str(objective.__class__) + ' ' + str(objective.weight))
+                rospy.loginfo(objective.name + ' ' + str(objective.weight))
 
         # Update Behavior Scores and find the highest one
         maxScore = 0
@@ -199,4 +199,5 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
             self.lastBehavior = execBehavior
             execBehavior.execute()
 
+        self.publishStatus(execBehavior.name)
         return True

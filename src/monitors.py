@@ -136,7 +136,11 @@ class BCMonitors():
             self.agent.poseGraphCompressed = self.compressPath(self.agent.poseGraph, self.ssDistancePoseGraph, self.ssAnglePoseGraph, True)
 
     def BatteryMonitor(self, data):
-        self.agent.battery = min(x for x in data.vbat if x > 10)
+        vbat = [x for x in data.vbat if x > 10]
+        if vbat:
+            self.agent.battery = min(vbat)
+        else:
+            self.agent.battery = 0
 
     def BatterySimMonitor(self, data):
         self.agent.battery = data.voltage

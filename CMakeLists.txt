@@ -32,6 +32,10 @@ add_message_files(
   DMReqArray.msg
   DMResp.msg
   DMRespArray.msg
+  BobcatStatus.msg
+  Monitor.msg
+  Objective.msg
+  Behavior.msg
 )
 
 generate_messages(

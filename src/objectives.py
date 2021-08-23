@@ -9,6 +9,8 @@ class DefaultObjective():
     def __init__(self, agent, priority):
         self.a = agent
         self.priority = priority
+        self.name = self.__class__.__name__
+        self.monitors = []
         # Start our calculated weight at 0
         self.weight = 0
         # Set our baseline weight based on the priority level given
@@ -52,6 +54,10 @@ class Explore(DefaultObjective):
 
 class ReportArtifacts(DefaultObjective):
 
+    def __init__(self, agent, priority):
+        DefaultObjective.__init__(self, agent, priority)
+        self.monitors = ['Artifact']
+
     def evaluate(self):
         self.setWeight(0)
         if self.a.report:
@@ -59,6 +65,10 @@ class ReportArtifacts(DefaultObjective):
 
 
 class Input(DefaultObjective):
+
+    def __init__(self, agent, priority):
+        DefaultObjective.__init__(self, agent, priority)
+        self.monitors = ['HumanInput']
 
     def evaluate(self):
         self.setWeight(0)
@@ -68,6 +78,10 @@ class Input(DefaultObjective):
 
 class MaintainComms(DefaultObjective):
 
+    def __init__(self, agent, priority):
+        DefaultObjective.__init__(self, agent, priority)
+        self.monitors = ['Comms']
+
     def evaluate(self):
         self.setWeight(0)
         if not self.a.base.incomm:
@@ -75,6 +89,10 @@ class MaintainComms(DefaultObjective):
 
 
 class ExtendComms(DefaultObjective):
+
+    def __init__(self, agent, priority):
+        DefaultObjective.__init__(self, agent, priority)
+        self.monitors = ['DeployBeacon', 'ReverseDrop']
 
     def evaluate(self):
         self.setWeight(0)
