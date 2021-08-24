@@ -25,6 +25,7 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         self.commListen = True
         self.debugWeights = False
         self.lastBehavior = None
+        self.neighborWait = 0
 
         # Initialize all of the BOBCAT modules
         BCMonitors.__init__(self)
@@ -59,7 +60,7 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
                 self.initialPose = self.agent.odometry.pose.pose
         elif not self.startedMission:
             # Do this here so we only do this calculation until leaving the starting area
-            if getDist(self.agent.odometry.pose.pose.position, self.initialPose.position) > 3:
+            if getDist(self.agent.odometry.pose.pose.position, self.initialPose.position) > 5:
                 rospy.loginfo('Started Mission')
                 self.startedMission = True
 
@@ -143,7 +144,6 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
 
         ### Start Monitor updates ###
         if self.startedMission:
-            self.NeighborMonitor()
             self.BeaconMonitor()
             if self.reverseDropEnable:
                 self.ReverseDropMonitor()
@@ -191,11 +191,19 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
             rospy.loginfo('')
             rospy.loginfo('executing ' + execBehavior.name)
 
-        if self.nearbyRobot and execBehavior.name != 'Go Home':
+        # Check our path to make sure it doesn't send us into another robot
+        if self.startedMission:
+            self.NeighborMonitor()
+        if self.nearbyRobot:
             self.behaviors['stop'].execute()
+            self.neighborWait += 1
             self.updateStatus('Waiting')
             rospy.loginfo(self.id + ' waiting for neighbor to move...')
+            if self.neighborWait > self.stopCheck / 2:
+                self.replan = 'neighborPath'
+                self.replanCheck()
         else:
+            self.neighborWait = 0
             self.lastBehavior = execBehavior
             execBehavior.execute()
 

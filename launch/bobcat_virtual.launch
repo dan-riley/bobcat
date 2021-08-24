@@ -27,7 +27,7 @@
     <arg name="useVirtual" value="true" />
     <arg name="nodeTopic" value="at_a_node" />
     <arg name="artifactsTopic" value="artifact_array/relay" />
-    <arg name="anchorX" value="0.0" />
+    <arg name="anchorX" value="-5.0" />
     <arg name="anchorY" value="0.0" />
     <arg name="anchorZ" value="0.0" />
 

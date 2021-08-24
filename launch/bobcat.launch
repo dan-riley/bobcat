@@ -29,7 +29,7 @@
   <!-- Set to false if comms may be an issue.  CAUTION: This must be the same on all agents! -->
   <arg name="reportImages" default="true" />
   <!-- How many artifacts until we go back to comms to report -->
-  <arg name="maxNewArtifacts" default="5" />
+  <arg name="maxNewArtifacts" default="3" />
   <!-- How long to wait until reporting if we don't have enough new artifacts -->
   <arg name="maxReportTime" default="300" />
   <!-- Distance within which to fuse artifacts -->
@@ -90,7 +90,7 @@
   <arg name="artifactsTopic" default="artifact_array/relay" />
   <arg name="poseGraphTopic" default="lio_sam/mapping/path" />
   <!-- Approximate location of anchor node, for first beacon drop distance calc -->
-  <arg name="anchorX" default="0.0" />
+  <arg name="anchorX" default="-5.0" />
   <arg name="anchorY" default="0.0" />
   <arg name="anchorZ" default="0.0" />
   <!-- Subsampling parameters for Goal Path and Pose Graph.  Set distance to 0 to disable. -->

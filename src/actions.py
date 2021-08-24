@@ -260,6 +260,9 @@ class BCActions():
         if reason == 'neighbor':
             self.updateStatus('Replanning Neighbor')
             rospy.loginfo(self.id + ' replanning due to neighbor')
+        elif reason == 'neighborPath':
+            self.updateStatus('Replanning Neighbor Path')
+            rospy.loginfo(self.id + ' tired of waiting, replanning due to neighbor')
         elif reason == 'gui':
             self.updateStatus('Replanning GUI')
             rospy.loginfo(self.id + ' replanning due to GUI input')
@@ -282,6 +285,9 @@ class BCActions():
                 self.replanStatus(self.blacklistUpdated)
                 self.task_pub.publish('unstuck')
             else:
+                # Ignore stale neighbor path replans
+                if not self.neighborWait and self.replan == 'neighborPath':
+                    return False
                 self.replanStatus(self.replan)
                 self.task_pub.publish(self.replanCommand)
                 self.replan = False

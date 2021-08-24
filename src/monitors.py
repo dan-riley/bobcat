@@ -10,7 +10,7 @@ from marble_origin_detection_msgs.msg import OriginDetectionStatus
 from estop_msgs.msg import BaseStatus
 from sensor_msgs.msg import BatteryState
 
-from util.helpers import getDist, getYaw, averagePose, averagePosition, angleDiff
+from util.helpers import getDist, getYaw, averagePose, averagePosition, angleDiff, comparePaths, truncatePath
 
 
 class BCMonitors():
@@ -58,6 +58,7 @@ class BCMonitors():
         self.lastStopCommand = rospy.get_rostime() + rospy.Duration(1)
         self.newArtifactTime = rospy.Time()
         self.numNewArtifacts = 0
+        self.guiStopTime = rospy.get_rostime() + rospy.Duration(3600) # One hour, until set by GUI
 
         # Monitor outputs
         self.replan = False
@@ -301,11 +302,11 @@ class BCMonitors():
         # Identify our report so we can track that the base station has seen it
         if self.numNewArtifacts:
             # Make sure we have enough new artifacts OR enough time has passed
-            # Always report once the robot has been running for 45 minutes
+            # Always report once the robot has reached the time set by the supervisor
             if ((self.numNewArtifacts >= self.maxNewArtifacts) or
                 (rospy.get_rostime() >
                  self.newArtifactTime + rospy.Duration(self.maxReportTime)) or
-                (rospy.get_rostime() > self.start_time + rospy.Duration(2700))):
+                (rospy.get_rostime() > self.guiStopTime)):
                 self.report = True
 
             # Once we see the base has our latest artifact report we can stop going home
@@ -377,17 +378,36 @@ class BCMonitors():
         # Check if there's another robot close by and we should just stop until they're clear
         self.nearbyRobot = False
         curpos = self.agent.odometry.pose.pose.position
+        path = truncatePath(self.agent.goal.path, curpos)
+
         for neighbor in self.neighbors.values():
             # Ignore the neighbor if we don't have current data, which should've come direct
             if rospy.get_rostime() > neighbor.lastDirectMessage + rospy.Duration(5):
                 continue
+
+            # First check to see if the neighbor is in the vicinity before bothering with path
             npos = neighbor.odometry.pose.pose.position
-            # Check if we have a neighbor close by
-            if getDist(curpos, npos) < self.deconflictRadius:
-                # Check if we are closer to the starting point
-                if getDist(curpos, self.anchorPos) < getDist(npos, self.anchorPos):
-                    self.nearbyRobot = True
-                    break
+            curToNPos = getDist(curpos, npos)
+            if curToNPos < self.deconflictRadius * 3:
+                # Only use the path starting at the robot position
+                npath = truncatePath(neighbor.goal.path, npos)
+                # Check if our path points at their path and gets close to theirs
+                if comparePaths(path, npath, self.deconflictRadius * 2):
+                    # Check if they're pointed at us and decide who stops
+                    if comparePaths(npath, path, self.deconflictRadius * 2):
+                        # Figure out if we're going away or toward home
+                        anchorToCur = getDist(curpos, self.anchorPos)
+                        anchorToGoal = getDist(path.poses[-1].pose.position, self.anchorPos)
+                        curGoingAwayFromAnchor = anchorToCur < anchorToGoal
+                        if curGoingAwayFromAnchor:
+                            # Going away from home, we should stop, other will keep going
+                            if anchorToCur < getDist(npos, self.anchorPos):
+                                self.nearbyRobot = True
+                                break
+                    else:
+                        # We could run into them if we catch up, so wait
+                        self.nearbyRobot = True
+                        break
 
     def GUIMonitor(self):
         # Manage the newest task sent
@@ -412,6 +432,17 @@ class BCMonitors():
                     self.dropReason = 'GUI Command'
 
                 rospy.loginfo(self.id + ' received new GUI Task ' + self.agent.guiTaskValue)
+            elif self.agent.guiTaskName == 'setGUITime':
+                self.guiStopTime = rospy.Time(int(self.agent.guiTaskValue))
+                rospy.loginfo(self.id + ' set mission stop time to ' + str(self.guiStopTime))
+                self.updateStatus('Set Stop Time')
+            elif self.agent.guiTaskName == 'setBeacons':
+                self.myBeacons = self.agent.guiTaskValue.split(',')
+                self.numBeacons = len(self.myBeacons) if self.myBeacons[0] != '' else 0
+                for beacon in self.myBeacons:
+                    self.beacons[beacon].owner = True
+                rospy.loginfo(self.id + ' loaded beacons ' + str(self.myBeacons))
+                self.updateStatus('Loaded Beacons')
             else:
                 # Publish a boolean to the given topic for direct control
                 # Shouldn't really be in a Monitor but for now the best place for it
