@@ -135,7 +135,12 @@ class BCBase(BOBCAT):
 
     def GuiTaskValueReceiver(self, data, nid):
         self.neighbors[nid].guiStamp = rospy.get_rostime()
-        self.neighbors[nid].guiTaskValue = data.data
+        if 'setTime' in data.data:
+            # GUI time is unreliable, so use our time to create it
+            end_seconds = int(data.data.split('_')[1]) * 60
+            self.neighbors[nid].guiTaskValue = str(rospy.get_rostime() + rospy.Duration(end_seconds))
+        else:
+            self.neighbors[nid].guiTaskValue = data.data
 
     def GuiGoalReceiver(self, data, nid):
         # Don't accept a 0,0 goal due to GUI errors
@@ -149,6 +154,8 @@ class BCBase(BOBCAT):
 
     def GuiResetReceiver(self, data, nid):
         if data.agent == nid:
+            # GUI time may not match the times the base node uses
+            data.stamp = rospy.get_rostime()
             # If the data is only going to the robot then we just add here and don't process
             if not data.base and data.robots and data.stamp > self.neighbors[nid].resetStamp:
                 self.neighbors[nid].guiStamp = rospy.get_rostime()

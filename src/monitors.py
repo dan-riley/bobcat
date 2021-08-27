@@ -433,7 +433,7 @@ class BCMonitors():
 
                 rospy.loginfo(self.id + ' received new GUI Task ' + self.agent.guiTaskValue)
             elif self.agent.guiTaskName == 'setGUITime':
-                self.guiStopTime = rospy.Time(int(self.agent.guiTaskValue))
+                self.guiStopTime = rospy.Time(int(self.agent.guiTaskValue) / 1000000000)
                 rospy.loginfo(self.id + ' set mission stop time to ' + str(self.guiStopTime))
                 self.updateStatus('Set Stop Time')
             elif self.agent.guiTaskName == 'setBeacons':
