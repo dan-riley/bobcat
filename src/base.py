@@ -223,7 +223,11 @@ class BCBase(BOBCAT):
     def reportArtifacts(self):
         for artifact in self.fusedArtifacts.values():
             if not artifact.reported:
-                self.fused_pub.publish(artifact.artifact)
+                # If it's a high probablity artifact, report immediately
+                # Otherwise wait until 55 minutes after start time
+                if (artifact.artifact.obj_prob > 0.5 or
+                        rospy.get_rostime() > self.start_time + rospy.Duration(3300)):
+                    self.fused_pub.publish(artifact.artifact)
 
     ##### BOBCAT Base Station Execution #####
     def run(self):

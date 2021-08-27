@@ -54,6 +54,12 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         # Check whether we've started the mission by moving 3 meters
         if not self.initialPose:
             # Make sure we have a valid pose and it's not just the blank initialized pose
+            # If we restarted more than 20 meters from the anchor, make sure we start the mission
+            if (getDist(self.agent.odometry.pose.pose.position, self.anchorPos) > 20):
+                rospy.loginfo('Restarted Mission away from Anchor')
+                self.initialPose = self.anchorPos
+                self.startedMission = True
+                self.guiBehavior = None  # start exploring or regaining comms
             if (self.agent.odometry.pose.pose.position.x != 0 and
                 self.agent.odometry.pose.pose.position.y != 0 and
                 self.agent.odometry.pose.pose.position.z != 0):

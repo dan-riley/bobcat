@@ -279,7 +279,7 @@ class BCActions():
     def replanCheck(self):
         # If a replan was requested somewhere, trigger it, unless we already asked recently
         if (rospy.get_rostime() > self.lastReplanTime + rospy.Duration(self.stopCheck) and
-                (self.replan or self.blacklistUpdated)):
+                self.startedMission and (self.replan or self.blacklistUpdated)):
             self.lastReplanTime = rospy.get_rostime()
             if self.blacklistUpdated:
                 self.replanStatus(self.blacklistUpdated)
@@ -318,8 +318,8 @@ class BCActions():
             # If we're stuck, with no plan, but we've reached the end of the path, blacklist this
             if len(self.agent.goal.path.poses) > 0:
                 pathend = self.agent.goal.path.poses[-1].pose.position
-                if (not self.planner_status and getDist(pathend,
-                        self.agent.odometry.pose.pose.position) < 1.0):
+                if (self.startedMission and not self.planner_status and
+                        getDist(pathend, self.agent.odometry.pose.pose.position) < 1.0):
                    self.addBlacklist(pathend)
         elif self.trajOn:
             self.trajOn = False

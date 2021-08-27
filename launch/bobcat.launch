@@ -102,7 +102,7 @@
   <!-- The tf buffer, run externally for better cpu speed, only when using pose graph -->
   <node ns="$(arg ns)" pkg="tf2_ros" type="buffer_server" name="buffer_server" if="$(arg sharePoseGraph)" />
 
-  <node ns="$(arg ns)" pkg="bobcat" type="bobcat_node.py" name="bobcat" output="screen">
+  <node ns="$(arg ns)" pkg="bobcat" type="bobcat_node.py" name="bobcat" output="screen" respawn="true">
     <!-- Parameters -->
     <param name="vehicle" value="$(arg vehicle)" />
     <param name="type" value="$(arg type)" />
