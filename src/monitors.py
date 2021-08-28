@@ -30,6 +30,8 @@ class BCMonitors():
         self.maxDist = rospy.get_param('bobcat/dropDist', 30)
         # Minimum distance between junctions before dropping another beacon
         self.junctionDist = rospy.get_param('bobcat/junctionDist', 10)
+        # Minimum distance between beacons when dropping due to lost comms
+        self.redeployDist = rospy.get_param('bobcat/redeployDist', 10)
         # Whether to use turn detection to drop beacons
         self.turnDetect = rospy.get_param('bobcat/turnDetect', True)
         # Whether this agent should delay their drop so the trailing robot can
@@ -184,14 +186,18 @@ class BCMonitors():
                 self.reverseDrop = True
                 # Check if we've already attempted a reverse drop in this area
                 # Sometimes there are deadzones and this can cause a loop if not accounted for
+                # Allow for one re-attempt in case we had a bad beacon drop earlier
                 pose = self.agent.odometry.pose.pose
+                bl_count = 0
                 for bl in self.bl_beacons:
                     if getDist(pose.position, bl) < self.junctionDist:
-                        self.reverseDrop = False
-                        # Disable checking again unless we regain comms at some point
-                        self.checkReverse = False
-                        rospy.loginfo(self.id + ' skipping reverse drop due to previous try')
-                        break
+                        bl_count += 1
+                        if bl_count > 1:
+                            self.reverseDrop = False
+                            # Disable checking again unless we regain comms at some point
+                            self.checkReverse = False
+                            rospy.loginfo(self.id + ' skipping reverse drop due to previous try')
+                            break
 
                 # Add to the list of previously tried positions
                 if self.reverseDrop:
@@ -203,12 +209,13 @@ class BCMonitors():
         # If we've regained comms and were trying to reverse drop, check if we can
         if self.reverseDrop and self.base.incomm:
             pose = self.agent.odometry.pose.pose
-            checkDist = self.junctionDist
+            checkDist = self.redeployDist
             if self.regainBase > 5:
-                # Make sure there's no beacons already in the area
+                # Make sure there's no more than 1 beacon already in the area
+                # Allow for one in case we have a failed drop or beacon isn't working
                 dropBeacon = True
                 dropBeacon, nB, nDB = self.beaconDistCheck(pose, checkDist, dropBeacon)
-                if dropBeacon:
+                if dropBeacon or nB - nDB == 1:
                     self.dropReason = 'Regain comms'
                     self.deployBeacon = True
                 else:

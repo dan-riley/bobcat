@@ -38,7 +38,7 @@ class BCActions():
 
         self.status_pub = rospy.Publisher('bobcat_status', BobcatStatus, latch=True, queue_size=1)
         self.task_pub = rospy.Publisher('task', String, queue_size=10, latch=True)
-        self.deploy_pub = rospy.Publisher('deploy', Bool, queue_size=10)
+        self.deploy_pub = rospy.Publisher('deploy_beacon', Bool, queue_size=10)
         self.deploy_breadcrumb_pub = rospy.Publisher('breadcrumb/deploy', Empty, queue_size=10)
         self.reset_pub = rospy.Publisher('reset_artifacts', Bool, queue_size=10)
         self.num_pub = rospy.Publisher('num_neighbors', Int8, queue_size=10)

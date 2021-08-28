@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <launch>
   <arg name="vehicle" default="H01" />
-  <arg name="useMesh" default="false" />
+  <arg name="useMesh" default="true" />
   <arg name="singleGoalDeconflict" default="true" />
   <arg name="sharePoseGraph" default="true" />
   <arg name="myBeacons" default="" />
   <arg name="turnDetect" default="true" />
   <arg name="delayDrop" default="false" />
+  <arg name="redeployDist" default="0" />
   <arg name="reverseDrop" default="true" />
   <arg name="mappingRange" default="1000" />
   <arg name="useExtTraj" default="false" />
@@ -20,6 +21,7 @@
     <arg name="myBeacons" value="$(arg myBeacons)" />
     <arg name="turnDetect" value="$(arg turnDetect)" />
     <arg name="delayDrop" value="$(arg delayDrop)" />
+    <arg name="redeployDist" value="$(arg redeployDist)" />
     <arg name="reverseDrop" value="$(arg reverseDrop)" />
     <arg name="mappingRange" value="$(arg mappingRange)" />
     <arg name="useExtTraj" value="$(arg useExtTraj)" />

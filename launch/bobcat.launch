@@ -54,6 +54,8 @@
   <arg name="dropDist" default="200" />
   <!-- Minimum distance between nodes before dropping another beacon -->
   <arg name="junctionDist" default="10" />
+  <!-- Minimum distance between beacons when dropping due to lost comms -->
+  <arg name="redeployDist" default="5" />
   <!-- Whether to use turn detection to drop beacons -->
   <arg name="turnDetect" default="true" />
   <!-- Whether to delay beacon deployment so the trailing robot can drop instead -->
@@ -129,6 +131,7 @@
     <param name="anchorDropDist" value="$(arg anchorDropDist)" />
     <param name="dropDist" value="$(arg dropDist)" />
     <param name="junctionDist" value="$(arg junctionDist)" />
+    <param name="redeployDist" value="$(arg redeployDist)" />
     <param name="turnDetect" value="$(arg turnDetect)" />
     <param name="delayDrop" value="$(arg delayDrop)" />
     <param name="reverseDrop" value="$(arg reverseDrop)" />

@@ -96,7 +96,8 @@ class DeployBeacon(DefaultBehavior):
             rospy.loginfo(self.a.id + ' deploying beacon ' + deploy + ' for ' + self.a.dropReason)
             try:
                 # Deploy a virtual beacon whether using virtual, sim or live
-                self.a.deploy_breadcrumb_pub.publish(Empty())
+                # New guidance publishes this now after maneuver, but leaving if needed later
+                # self.a.deploy_breadcrumb_pub.publish(Empty())
 
                 if self.a.useSimComms:
                     # Drop the simulated beacon, and pause to simulate drop
@@ -109,11 +110,9 @@ class DeployBeacon(DefaultBehavior):
                         rospy.sleep(3)
                         print(ret.status_message)
                 else:
-                    # Send deploy message; guidance stops, then wait for deployment to finish
+                    # Send deploy message; guidance stops and maneuvers, we just continue
                     self.a.deploy_pub.publish(True)
-                    rospy.sleep(3)
-                    if not self.a.useVirtual:
-                        rospy.sleep(7)
+                    rospy.sleep(1)
 
                 # Resume the mission
                 if self.a.guiBehavior == 'deployBeacon':
