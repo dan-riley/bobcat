@@ -25,7 +25,6 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         self.commListen = True
         self.debugWeights = False
         self.lastBehavior = None
-        self.neighborWait = 0
 
         # Initialize all of the BOBCAT modules
         BCMonitors.__init__(self)
@@ -41,6 +40,7 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         self.objectives['input'] = objectives.Input(self, 0)
         self.objectives['maintainComms'] = objectives.MaintainComms(self, 3)
         self.objectives['extendComms'] = objectives.ExtendComms(self, 1)
+        self.objectives['beSafe'] = objectives.BeSafe(self, 0)
 
         # Setup Behaviors
         self.behaviors = {}
@@ -151,6 +151,7 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         ### Start Monitor updates ###
         if self.startedMission:
             self.BeaconMonitor()
+            self.NeighborMonitor()
             if self.reverseDropEnable:
                 self.ReverseDropMonitor()
             if self.agent.status != 'Stop':
@@ -185,9 +186,9 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
                 if execBehavior and self.lastBehavior:
                     if behavior == self.lastBehavior:
                         execBehavior = behavior
-                        print("tie, executing last behavior!")
+                        rospy.loginfo("tie, executing last behavior!")
                     else:
-                        print("we have a tie!", behavior.name, execBehavior.name, self.lastBehavior.name)
+                        rospy.loginfo("we have a tie! " + behavior.name + ' ' + execBehavior.name + ' ' + self.lastBehavior.name)
 
             if self.debugWeights:
                 rospy.loginfo(behavior.name + ' ' + str(behavior.score))
@@ -197,21 +198,8 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
             rospy.loginfo('')
             rospy.loginfo('executing ' + execBehavior.name)
 
-        # Check our path to make sure it doesn't send us into another robot
-        if self.startedMission:
-            self.NeighborMonitor()
-        if self.nearbyRobot:
-            self.behaviors['stop'].execute()
-            self.neighborWait += 1
-            self.updateStatus('Waiting')
-            rospy.loginfo(self.id + ' waiting for neighbor to move...')
-            if self.neighborWait > self.stopCheck / 2:
-                self.replan = 'neighborPath'
-                self.replanCheck()
-        else:
-            self.neighborWait = 0
-            self.lastBehavior = execBehavior
-            execBehavior.execute()
+        self.lastBehavior = execBehavior
+        execBehavior.execute()
 
         self.publishStatus(execBehavior.name)
         return True

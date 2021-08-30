@@ -98,3 +98,17 @@ class ExtendComms(DefaultObjective):
         self.setWeight(0)
         if self.a.deployBeacon or self.a.reverseDrop:
             self.setWeight()
+
+
+class BeSafe(DefaultObjective):
+
+    def __init__(self, agent, priority):
+        DefaultObjective.__init__(self, agent, priority)
+        self.monitors = ['NearbyRobot']
+        # Add additional weight to this objective since it's safety
+        self.initialWeight += 1
+
+    def evaluate(self):
+        self.setWeight(0)
+        if self.a.nearbyRobot:
+            self.setWeight()

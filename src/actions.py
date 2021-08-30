@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 from __future__ import print_function
+import math
 import rospy
 
 from std_msgs.msg import Empty
@@ -12,7 +13,18 @@ from geometry_msgs.msg import Point
 from visualization_msgs.msg import Marker
 from bobcat.msg import BobcatStatus, Monitor, Objective, Behavior
 
-from util.helpers import getDist
+from util.helpers import getDist, getYaw
+
+# Import Ignition/Gazebo only if running in the sim so the robot doesn't need them
+if rospy.get_param('bobcat/simcomms', False):
+    # Switch for ignition or gazebo here temporarily until I find a better place
+    useIgnition = True
+
+    from gazebo_msgs.msg import ModelState
+    if useIgnition:
+        from subt_msgs.srv import SetPose
+    else:
+        from gazebo_msgs.srv import SetModelState
 
 
 class BCActions():
@@ -22,6 +34,7 @@ class BCActions():
         self.stopStart = True
         self.useTraj = False
         self.trajOn = False
+        self.lastBeacon = False
         self.lastGoalTime = rospy.Time()
         self.lastReplanTime = rospy.Time(0)
 
@@ -101,6 +114,96 @@ class BCActions():
             rospy.loginfo(self.id + ' added ' + goalstr + ' to blacklist')
             self.blacklist.points.append(goal)
             self.pub_blacklist.publish(self.blacklist)
+
+    def dropBeacon(self):
+        # A beacon was deployed
+        if self.lastBeacon and self.beaconDeployed:
+            rospy.loginfo(self.id + ' deployed beacon ' + self.lastBeacon)
+            # Store the beacon
+            self.numBeacons = self.numBeacons - 1
+            self.beacons[self.lastBeacon].active = True
+            self.beacons[self.lastBeacon].simcomm = True
+            self.beacons[self.lastBeacon].pos = self.agent.odometry.pose.pose.position
+
+            # Reset monitors
+            self.deployBeacon = False
+            self.beaconDeployed = False
+            self.lastBeacon = False
+
+            # Resume the mission
+            if self.guiBehavior == 'deployBeacon':
+                self.guiBehavior = None
+            return
+        elif self.lastBeacon:
+            # A beacon has been requested but not deployed
+            return
+
+        deploy = False
+        # Find the first available beacon for this agent
+        for beacon in self.beacons.values():
+            if beacon.owner and not beacon.active:
+                deploy = beacon.id
+                break
+
+        if deploy:
+            # Publish message to guidance/deployment mechanism
+            pose = self.agent.odometry.pose.pose
+
+            self.agent.status = 'Deploy'
+            self.task_pub.publish(self.agent.status)
+
+            if self.useSimComms:
+                # Either need to identify location before comm loss, or make this a guidance
+                # command to return to a point in range
+                if useIgnition:
+                    service = '/subt/set_pose'
+                    rospy.wait_for_service(service)
+                    set_state = rospy.ServiceProxy(service, SetPose)
+                else:
+                    service = '/gazebo/set_model_state'
+                    rospy.wait_for_service(service)
+                    set_state = rospy.ServiceProxy(service, SetModelState)
+
+                # Get the yaw from the quaternion
+                yaw = getYaw(pose.orientation)
+
+                offset = 0.5
+
+                pose.position.x = pose.position.x - math.cos(yaw) * offset
+                pose.position.y = pose.position.y - math.sin(yaw) * offset
+
+                state = ModelState()
+                state.model_name = deploy
+                state.pose = pose
+
+            rospy.loginfo(self.id + ' deploying beacon ' + deploy + ' for ' + self.dropReason)
+            try:
+                # Deploy a virtual beacon whether using virtual, sim or live
+                # New guidance publishes this now after maneuver, but leaving if needed later
+                # self.deploy_breadcrumb_pub.publish(Empty())
+
+                if self.useSimComms:
+                    # Drop the simulated beacon, and pause to simulate drop
+                    if useIgnition:
+                        ret = set_state(deploy, pose)
+                        rospy.sleep(3)
+                        print(ret.success)
+                    else:
+                        ret = set_state(state)
+                        rospy.sleep(3)
+                        print(ret.status_message)
+
+                # Send deploy message; guidance stops and maneuvers, we just continue
+                self.deploy_pub.publish(True)
+                self.lastBeacon = deploy
+            except Exception as e:
+                rospy.logerr('Error deploying beacon %s', str(e))
+        else:
+            rospy.loginfo(self.id + ' no beacon to deploy')
+            # Most likely reason it thought we had a beacon is due to restart.  So set num=0.
+            self.numBeacons = 0
+            if self.guiBehavior == 'deployBeacon':
+                self.guiBehavior = None
 
     ##### Begin Explore actions #####
     def deconflictGoals(self):
@@ -288,6 +391,10 @@ class BCActions():
                 # Ignore stale neighbor path replans
                 if not self.neighborWait and self.replan == 'neighborPath':
                     return False
+                # When stopped for a neighbor path, briefly get planner in explore mode
+                if self.replan == 'neighborPath':
+                    self.task_pub.publish('Explore')
+                    rospy.sleep(1)
                 self.replanStatus(self.replan)
                 self.task_pub.publish(self.replanCommand)
                 self.replan = False
@@ -361,6 +468,14 @@ class BCActions():
             self.task_pub.publish(self.agent.status)
             self.stop_pub.publish(self.stopCommand)
 
+        if self.nearbyRobot:
+            self.updateStatus('Waiting')
+            rospy.loginfo(self.id + ' waiting for neighbor to move...')
+            self.neighborWait += 1
+            if self.neighborWait > self.stopCheck:
+                self.replan = 'neighborPath'
+                self.replanCheck()
+
         if self.stopStart and self.useSimComms:
             rospy.loginfo(self.id + ' stopping')
             path = Path()
@@ -380,6 +495,12 @@ class BCActions():
             self.path_pub.publish(self.agent.explorePath)
 
     def setGoalPoint(self, reason):
+        # If we're stuck, briefly go to explore
+        if self.blacklistUpdated:
+            self.blacklistUpdated = False
+            self.explore()
+            return
+
         # Set the goal point for frontier exploration
         if reason == 'guiCommand':
             # Publishing resets the seq, but we're using that to track new commands, so save it
@@ -404,10 +525,10 @@ class BCActions():
         self.agent.goal.pose = self.agent.exploreGoal
         self.agent.goal.path = self.agent.explorePath
 
-        # Use the external trajectory follower to go home since planner refuses
+        # Use the external trajectory follower to go home if planner refuses
         # Don't ask immediately for a replan, the command will be sent periodically
         # This allows us to move a bit before requesting the plan again
-        if not self.planner_status and reason != 'guiCommand':
+        if self.useExtTraj and not self.planner_status and reason != 'guiCommand':
             if not self.trajOn:
                 self.trajOn = True
                 self.traj_pub.publish(True)
@@ -434,6 +555,7 @@ class BCActions():
         self.buildMonitorStatus(status, 'Comms', self.base.incomm)
         self.buildMonitorStatus(status, 'DeployBeacon', self.deployBeacon)
         self.buildMonitorStatus(status, 'ReverseDrop', self.reverseDrop)
+        self.buildMonitorStatus(status, 'NearbyRobot', self.nearbyRobot)
 
         # Get the objectives and behaviors
         for objective in self.objectives.values():

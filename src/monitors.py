@@ -6,6 +6,7 @@ import rospy
 from std_msgs.msg import Bool
 from std_msgs.msg import String
 from geometry_msgs.msg import Point
+from geometry_msgs.msg import Pose
 from marble_origin_detection_msgs.msg import OriginDetectionStatus
 from estop_msgs.msg import BaseStatus
 from sensor_msgs.msg import BatteryState
@@ -55,7 +56,9 @@ class BCMonitors():
         self.regainBase = 0
         self.dropReason = ''
         self.checkReverse = True
+        self.neighborWait = 0
         self.stuck = 0
+        self.stuckPose = Pose()
         self.ignoreStopCommand = False
         self.lastStopCommand = rospy.get_rostime() + rospy.Duration(1)
         self.newArtifactTime = rospy.Time()
@@ -74,6 +77,7 @@ class BCMonitors():
         self.guiBehavior = 'stop' # Start the robot in stop mode
         self.lastGuiBehavior = None
         self.nearbyRobot = False
+        self.beaconDeployed = False
 
         # Subscribers for some Monitors
         waitTopic = rospy.get_param('bobcat/waitTopic', 'origin_detection_status')
@@ -81,6 +85,7 @@ class BCMonitors():
         self.wait_sub = rospy.Subscriber(waitTopic, OriginDetectionStatus, self.WaitMonitor)
         self.stop_sub = rospy.Subscriber(stopTopic, Bool, self.StopMonitor)
         self.estop_sub = rospy.Subscriber('estop_cmd', Bool, self.EStopMonitor)
+        self.deploy_sub = rospy.Subscriber('deploy', Bool, self.DeployMonitor)
         self.input_sub = rospy.Subscriber('forceTask', String, self.InputMonitor)
         self.planner_sub = rospy.Subscriber('planner_status', Bool, self.PlannerMonitor)
         self.launch_sub = rospy.Subscriber('velocity_controller/enable', Bool, self.LaunchMonitor)
@@ -116,6 +121,10 @@ class BCMonitors():
         if not self.ignoreStopCommand and data.data:
             # Republish only hardware estop 'stop' commands to the software estop so they match
             self.stop_pub.publish(data.data and self.stopCommand)
+
+    def DeployMonitor(self, data):
+        if data.data:
+            self.beaconDeployed = True
 
     def InputMonitor(self, data):
         self.agent.guiTaskName = 'task'
@@ -243,6 +252,10 @@ class BCMonitors():
             self.regainBase = 0
 
     def BeaconMonitor(self):
+        # Make sure we stay in deploy behavior until confirmation the beacon was deployed
+        if self.deployBeacon and not self.beaconDeployed:
+            return
+
         self.deployBeacon = False
         # Check if we need to drop a beacon if we have any beacons to drop
         if self.numBeacons > 0:
@@ -333,13 +346,14 @@ class BCMonitors():
         self.blacklistUpdated = False
         if self.agent.goal.path.poses and len(self.history) == self.hislen:
             # Check if we've been stopped if we have a goal
-            if (getDist(self.history[0].position, self.history[-1].position) < 0.5 and
-                    abs(angleDiff(math.degrees(getYaw(self.history[0].orientation)),
+            if (getDist(self.stuckPose.position, self.history[-1].position) < 0.5 and
+                    abs(angleDiff(math.degrees(getYaw(self.stuckPose.orientation)),
                                   math.degrees(getYaw(self.history[-1].orientation)))) < 60):
                 self.stuck += 1
                 # Add the current goal to potential blacklist points
                 self.blgoals.append(self.agent.goal.pose.pose.position)
             else:
+                self.stuckPose = self.history[0]
                 self.stuck = 0
                 self.blgoals = []
 
@@ -348,10 +362,7 @@ class BCMonitors():
                 # Only add to the blacklist at the stopCheck intervals,
                 # or else they get added too often
 
-                # If in GUI Goal, just exit back to explore
-                if self.guiBehavior == 'goToGoal':
-                    self.guiBehavior = None
-                elif self.stuck % self.stopCheck == 0:
+                if self.stuck % self.stopCheck == 0:
                     # Get the average goal position
                     avgGoal = averagePosition(self.blgoals)
                     # Remove outliers
@@ -395,26 +406,25 @@ class BCMonitors():
             # First check to see if the neighbor is in the vicinity before bothering with path
             npos = neighbor.odometry.pose.pose.position
             curToNPos = getDist(curpos, npos)
-            if curToNPos < self.deconflictRadius * 3:
+            if curToNPos < self.deconflictRadius * 4:
                 # Only use the path starting at the robot position
                 npath = truncatePath(neighbor.goal.path, npos)
                 # Check if our path points at their path and gets close to theirs
-                if comparePaths(path, npath, self.deconflictRadius * 2):
+                if comparePaths(path, npath, self.deconflictRadius):
                     # Check if they're pointed at us and decide who stops
-                    if comparePaths(npath, path, self.deconflictRadius * 2):
-                        # Figure out if we're going away or toward home
-                        anchorToCur = getDist(curpos, self.anchorPos)
-                        anchorToGoal = getDist(path.poses[-1].pose.position, self.anchorPos)
-                        curGoingAwayFromAnchor = anchorToCur < anchorToGoal
-                        if curGoingAwayFromAnchor:
-                            # Going away from home, we should stop, other will keep going
-                            if anchorToCur < getDist(npos, self.anchorPos):
-                                self.nearbyRobot = True
-                                break
+                    if comparePaths(npath, path, self.deconflictRadius):
+                        # Break tie by ID.  H02 will stop for H01, and H01 will stop for D02.
+                        if self.id > neighbor.id:
+                            self.nearbyRobot = True
+                            break
                     else:
                         # We could run into them if we catch up, so wait
                         self.nearbyRobot = True
                         break
+
+        # Reset our waiting timer when there's no conflict
+        if not self.nearbyRobot:
+            self.neighborWait = 0
 
     def GUIMonitor(self):
         # Manage the newest task sent
@@ -437,6 +447,7 @@ class BCMonitors():
                 elif self.agent.guiTaskValue == 'Deploy':
                     self.guiBehavior = 'deployBeacon'
                     self.dropReason = 'GUI Command'
+                    self.deployBeacon = True
 
                 rospy.loginfo(self.id + ' received new GUI Task ' + self.agent.guiTaskValue)
             elif self.agent.guiTaskName == 'setGUITime':

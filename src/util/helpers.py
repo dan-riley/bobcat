@@ -190,6 +190,7 @@ def lineDistance(a0, a1, b0, b1):
 def comparePaths(path1, path2, limit):
     # Check each segment in second path, so we can look the current robot position first
     i = 0
+    descending = False
     while i < len(path2.poses) - 1:
         p20 = positionToNP(path2.poses[i].pose.position)
         p21 = positionToNP(path2.poses[i+1].pose.position)
@@ -197,12 +198,11 @@ def comparePaths(path1, path2, limit):
         # Check each segment in first path
         j = 0
         prevDist = 0
-        descending = False
         while j < len(path1.poses) - 1:
             p10 = positionToNP(path1.poses[j].pose.position)
             p11 = positionToNP(path1.poses[j+1].pose.position)
             ptDistance = lineDistance(p10, p11, p20, p21)
-            if ptDistance < prevDist:
+            if i == 0 and  ptDistance < prevDist:
                 descending = True
 
             if descending and ptDistance < limit:
