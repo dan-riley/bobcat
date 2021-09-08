@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 from __future__ import print_function
 import math
+import copy
 import rospy
 
 from std_msgs.msg import Empty
@@ -37,6 +38,7 @@ class BCActions():
         self.lastBeacon = False
         self.lastGoalTime = rospy.Time()
         self.lastReplanTime = rospy.Time(0)
+        self.lastGoalTime = rospy.Time()
 
         # Topics for publishers
         homeTopic = rospy.get_param('bobcat/homeTopic', 'report_artifact')
@@ -99,6 +101,12 @@ class BCActions():
         else:
             self.newStatus = status
 
+    def checkStatus(self, status):
+        if self.newStatus and status in self.newStatus:
+            return True
+
+        return False
+
     def checkBlacklist(self, goal):
         addBlacklist = True
         # Make sure it's not already in a blacklist radius
@@ -119,11 +127,30 @@ class BCActions():
         # A beacon was deployed
         if self.lastBeacon and self.beaconDeployed:
             rospy.loginfo(self.id + ' deployed beacon ' + self.lastBeacon)
-            # Store the beacon
             self.numBeacons = self.numBeacons - 1
+
+            # Calculate the beacon position
+            pose = copy.deepcopy(self.agent.odometry.pose.pose)
+            yaw = getYaw(pose.orientation)
+            center = (self.maxBeacons - 1.0) / 2.0
+            # Get beacon position number so we can go left to right
+            bpos = self.maxBeacons - self.startBeacons + self.numBeacons
+            ratio = (bpos - center) / center
+            # Angle in radians for max +/- 30 degrees
+            angrad = ratio * 0.5236
+            # Adjust for the yaw of the robot
+            yaw -= angrad
+            # Adjust the length for the angle
+            offset = 0.5 / math.cos(angrad)
+            # Set the position
+            pose.position.x -= math.cos(yaw) * offset
+            pose.position.y -= math.sin(yaw) * offset
+            pose.position.z -= 0.1
+
+            # Store the beacon
             self.beacons[self.lastBeacon].active = True
             self.beacons[self.lastBeacon].simcomm = True
-            self.beacons[self.lastBeacon].pos = self.agent.odometry.pose.pose.position
+            self.beacons[self.lastBeacon].pos = pose.position
 
             # Reset monitors
             self.deployBeacon = False
@@ -136,6 +163,7 @@ class BCActions():
             return
         elif self.lastBeacon:
             # A beacon has been requested but not deployed
+            self.updateGoalPath(True)
             return
 
         deploy = False
@@ -147,7 +175,7 @@ class BCActions():
 
         if deploy:
             # Publish message to guidance/deployment mechanism
-            pose = self.agent.odometry.pose.pose
+            pose = copy.deepcopy(self.agent.odometry.pose.pose)
 
             self.agent.status = 'Deploy'
             self.task_pub.publish(self.agent.status)
@@ -194,8 +222,15 @@ class BCActions():
                         print(ret.status_message)
 
                 # Send deploy message; guidance stops and maneuvers, we just continue
+                self.move()
                 self.deploy_pub.publish(True)
                 self.lastBeacon = deploy
+
+                # Ask the the planner to go ahead and start planning a path
+                if self.exploreToGoal:
+                    self.updatePlannerGoal()
+                else:
+                    self.task_pub.publish('Explore')
             except Exception as e:
                 rospy.logerr('Error deploying beacon %s', str(e))
         else:
@@ -204,6 +239,17 @@ class BCActions():
             self.numBeacons = 0
             if self.guiBehavior == 'deployBeacon':
                 self.guiBehavior = None
+
+    def publishGoalPath(self):
+        self.goal_pub.publish(self.agent.goal.pose)
+        if self.agent.goal.path.header.frame_id != 'starting':
+            self.path_pub.publish(self.agent.goal.path)
+
+    def updateGoalPath(self, publish=False):
+        self.agent.goal.pose = self.agent.exploreGoal
+        self.agent.goal.path = self.agent.explorePath
+        if publish:
+            self.publishGoalPath()
 
     ##### Begin Explore actions #####
     def deconflictGoals(self):
@@ -229,8 +275,7 @@ class BCActions():
                 # Check if there's an updated path for this goal, or one near it
                 if not goals:
                     if getDist(curgoal, self.agent.exploreGoal.pose.position) < 0.5:
-                        self.agent.goal.pose = self.agent.exploreGoal
-                        self.agent.goal.path = self.agent.explorePath
+                        self.updateGoalPath()
                 else:
                     for goal in goals:
                         if getDist(curgoal, goal.pose.pose.position) < 0.5:
@@ -270,13 +315,11 @@ class BCActions():
                             break
 
             # Set the goal to the planner's goal
-            self.agent.goal.pose = self.agent.exploreGoal
-            self.agent.goal.path = self.agent.explorePath
+            self.updateGoalPath()
         elif not goals:
             # Set the goal to the frontier goal
             # This should cause us to navigate to the goal, then go home if still no plan
-            self.agent.goal.pose = self.agent.exploreGoal
-            self.agent.goal.path = self.agent.explorePath
+            self.updateGoalPath()
         elif len(goals) == 1:
             # If we only have one potential goal, just go there
             # May want to consider stopping in place if there is a conflict!
@@ -337,8 +380,7 @@ class BCActions():
                         rospy.loginfo(self.id + ' all goals conflict, using best')
                 else:
                     # All goals blacklisted, start going home, but clear the blacklist
-                    self.agent.goal.pose = self.agent.exploreGoal
-                    self.agent.goal.path = self.agent.explorePath
+                    self.updateGoalPath()
                     self.blacklist.points = []
                     rospy.loginfo(self.id + ' all goals blacklisted ' + str(len(goals)))
                     self.useTraj = True
@@ -419,8 +461,7 @@ class BCActions():
                 self.trajOn = True
                 self.traj_pub.publish(True)
             # Stop using the old goal and path or else we'll get stuck in a loop
-            self.agent.goal.pose = self.agent.exploreGoal
-            self.agent.goal.path = self.agent.explorePath
+            self.updateGoalPath()
 
             # If we're stuck, with no plan, but we've reached the end of the path, blacklist this
             if len(self.agent.goal.path.poses) > 0:
@@ -450,15 +491,23 @@ class BCActions():
         self.trajCheck(self.replanCheck())
 
         # Publish the selected goal and path
-        self.goal_pub.publish(self.agent.goal.pose)
-        if self.agent.goal.path.header.frame_id != 'starting':
-            self.path_pub.publish(self.agent.goal.path)
+        self.publishGoalPath()
     ##### End Explore actions #####
 
-    def move(self):
+    def move(self, pauseCheck=False):
+        if pauseCheck and not self.paused:
+            return
         # Start movement control, usually after a stop
+        self.paused = False
         self.ignoreStopCommand = True
         self.stop_pub.publish(not self.stopCommand)
+
+    def pause(self):
+        # Stop the robot momentarily but don't change any statuses
+        self.paused = True
+        self.ignoreStopCommand = True
+        self.stop_pub.publish(self.stopCommand)
+        self.stopUpdate()
 
     def stop(self):
         # Stop the robot by publishing no path, but don't change the displayed goal
@@ -476,6 +525,9 @@ class BCActions():
                 self.replan = 'neighborPath'
                 self.replanCheck()
 
+        self.stopUpdate()
+
+    def stopUpdate(self):
         if self.stopStart and self.useSimComms:
             rospy.loginfo(self.id + ' stopping')
             path = Path()
@@ -489,10 +541,12 @@ class BCActions():
             self.path_pub.publish(path)
             self.stopStart = False
         else:
-            self.agent.goal.pose = self.agent.exploreGoal
-            self.agent.goal.path = self.agent.explorePath
-            self.goal_pub.publish(self.agent.exploreGoal)
-            self.path_pub.publish(self.agent.explorePath)
+            self.updateGoalPath(True)
+
+    def updatePlannerGoal(self):
+        # Have the planner plan to the goal point while we do other things
+        self.pub_guiGoal.publish(self.agent.guiGoalPoint)
+        self.task_pub.publish('guiCommand')
 
     def setGoalPoint(self, reason):
         # If we're stuck, briefly go to explore
@@ -507,6 +561,11 @@ class BCActions():
             seq = self.agent.guiGoalPoint.header.seq
             self.pub_guiGoal.publish(self.agent.guiGoalPoint)
             self.agent.guiGoalPoint.header.seq = seq
+            # Prevent getting stuck going to an unreachable goal
+            if rospy.get_rostime() > self.lastGoalTime + rospy.Duration(180):
+                rospy.loginfo('GUI Goal timeout, going back to explore')
+                self.guiBehavior = None
+                self.exploreToGoal = False
         else:
             # For now Home and Report need this set to switch frontier exploration
             self.home_pub.publish(True)
@@ -514,16 +573,13 @@ class BCActions():
         # Set the new task, and use frontier exploration's goal and path
         # Republish the command periodically in case planner went somewhere else
         self.stopStart = True
-        if (self.agent.status != reason or
-                rospy.get_rostime() > self.lastGoalTime + rospy.Duration(self.stopCheck)):
+        if (not self.paused and (self.agent.status != reason or
+                rospy.get_rostime() > self.lastGoalTime + rospy.Duration(self.stopCheck))):
             self.lastGoalTime = rospy.get_rostime()
             self.move()
             self.agent.status = reason
             self.task_pub.publish(self.agent.status)
-        self.goal_pub.publish(self.agent.exploreGoal)
-        self.path_pub.publish(self.agent.explorePath)
-        self.agent.goal.pose = self.agent.exploreGoal
-        self.agent.goal.path = self.agent.explorePath
+        self.updateGoalPath(True)
 
         # Use the external trajectory follower to go home if planner refuses
         # Don't ask immediately for a replan, the command will be sent periodically
@@ -553,7 +609,8 @@ class BCActions():
         self.buildMonitorStatus(status, 'Artifact', self.report)
         self.buildMonitorStatus(status, 'HumanInput', self.guiBehavior != None)
         self.buildMonitorStatus(status, 'Comms', self.base.incomm)
-        self.buildMonitorStatus(status, 'DeployBeacon', self.deployBeacon)
+        self.buildMonitorStatus(status, 'ExploreToGoal', self.exploreToGoal)
+        self.buildMonitorStatus(status, 'Beacon', self.deployBeacon)
         self.buildMonitorStatus(status, 'ReverseDrop', self.reverseDrop)
         self.buildMonitorStatus(status, 'NearbyRobot', self.nearbyRobot)
 

@@ -66,6 +66,8 @@ class BOBCAT(object):
         # Beacons this robot is carrying
         self.myBeacons = rospy.get_param('bobcat/myBeacons', '').split(',')
         self.numBeacons = len(self.myBeacons) if self.myBeacons[0] != '' else 0
+        self.startBeacons = self.numBeacons
+        self.maxBeacons = rospy.get_param('bobcat/maxBeacons', 6)
         self.smartBeacons = rospy.get_param('bobcat/smartBeacons', True)
         # Subsampling parameters for various paths.  Set distance to 0 for no subsampling.
         self.ssDistanceGoalPath = rospy.get_param('bobcat/subsampleDistanceGoalPath', 0)
@@ -121,6 +123,15 @@ class BOBCAT(object):
         # Initialize object for our own data
         self.agent = Agent(self.id, self.id, self.type, self.reportImages)
         self.DataListener(topics)
+
+        # Track timeout for each DM response
+        self.dmTimeout = {}
+        self.dmTimeout['mapDiffs'] = {}
+        self.dmTimeout['images'] = {}
+        self.dmTimeout['poseGraphs'] = {}
+        self.dmTimeout['mapDiffs'][self.id] = {}
+        self.dmTimeout['images'][self.id] = {}
+        self.dmTimeout['poseGraphs'][self.id] = {}
 
         # Initialize base station
         self.base = Base()
@@ -284,6 +295,9 @@ class BOBCAT(object):
         # Pairs for direct message responses
         self.dmResp_pub[nid] = rospy.Publisher(pubDMRespTopic, DMRespArray, queue_size=1)
         self.dmResp_sub[nid] = rospy.Subscriber(subDMRespTopic, DMRespArray, self.DMResponseReceiever, nid)
+        self.dmTimeout['mapDiffs'][nid] = {}
+        self.dmTimeout['images'][nid] = {}
+        self.dmTimeout['poseGraphs'][nid] = {}
     ##### Stop Remote Message Aggregation #####
 
     ##### Start Output Aggregation #####
@@ -426,6 +440,8 @@ class BOBCAT(object):
         # Same with base station
         if self.type != 'base' and not self.solo:
             self.base.incomm = self.base.lastDirectMessage > checkTime
+            if not self.base.incomm and self.base.regain:
+                self.base.resetRegain()
 
     # Next 3 functions are just for simulated comms.  Otherwise simcomm is True.
     def simCommChecker(self, data, nid):
@@ -612,6 +628,15 @@ class BOBCAT(object):
 
         return False
 
+    def getTimeout(self, msg, nid, aid):
+        if aid not in self.dmTimeout[msg][nid]:
+            self.dmTimeout[msg][nid][aid] = {}
+        return self.dmTimeout[msg][nid][aid]
+
+    def initTimeout(self, timeout, i):
+        if i not in timeout:
+            timeout[i] = rospy.Time(0)
+
     def addMapDiffs(self, nid, nresp, agent):
         nresp.mapDiffs.owner = agent.id
         nresp.mapDiffs.num_octomaps = 0
@@ -622,9 +647,12 @@ class BOBCAT(object):
             mapDiffs = self.neighbors[agent.id].mapDiffs.octomaps
 
         # Add each requested diff to the message
+        timeout = self.getTimeout('mapDiffs', nid, agent.id)
         for i in agent.missingDiffs:
+            self.initTimeout(timeout, i)
             for mapDiff in mapDiffs:
-                if mapDiff.header.seq == i:
+                if mapDiff.header.seq == i and rospy.get_rostime() > timeout[i]:
+                    timeout[i] = rospy.get_rostime() + self.dmWait * 2
                     nresp.mapDiffs.octomaps.append(mapDiff)
                     nresp.mapDiffs.num_octomaps += 1
                     if self.dmSplit:
@@ -634,20 +662,30 @@ class BOBCAT(object):
                         nresp.id = agent.id
                         nresp.mapDiffs.owner = agent.id
                         nresp.mapDiffs.num_octomaps = 0
+                        rospy.sleep(0.5)
                     break
+
+        return nresp
 
     def addImages(self, nid, nresp, agent):
         # Add each requested image to the message
+        timeout = self.getTimeout('images', nid, agent.id)
         for i in agent.missingImages:
+            self.initTimeout(timeout, i)
             for artifact in self.artifacts.values():
-                if artifact.image.artifact_id == i and artifact.image.artifact_img.data:
+                if (artifact.image.artifact_id == i and artifact.image.artifact_img.data and
+                        rospy.get_rostime() > timeout[i]):
+                    timeout[i] = rospy.get_rostime() + self.dmWait * 2
                     nresp.images.append(artifact.image)
                     if self.dmSplit:
                         # If splitting responses, publish then reset the response message
                         self.dmResp_pub[nid].publish([nresp])
                         nresp = DMResp()
                         nresp.id = agent.id
+                        rospy.sleep(0.5)
                     break
+
+        return nresp
 
     def addPoseGraph(self, nid, nresp, agent):
         if agent.missingPoseGraph:
@@ -661,14 +699,29 @@ class BOBCAT(object):
             else:
                 return
 
-            nresp.poseGraph = poseGraph
-            nresp.latestPoseGraph = latestPoseGraph
-            if self.dmSplit:
-                self.dmResp_pub[nid].publish([nresp])
+            timeout = self.getTimeout('poseGraphs', nid, agent.id)
+            self.initTimeout(timeout, latestPoseGraph)
+
+            if rospy.get_rostime() > timeout[latestPoseGraph]:
+                timeout[latestPoseGraph] = rospy.get_rostime() + self.dmWait * 2
+                nresp.poseGraph = poseGraph
+                nresp.latestPoseGraph = latestPoseGraph
+                if self.dmSplit:
+                    self.dmResp_pub[nid].publish([nresp])
+                    nresp = DMResp()
+                    nresp.id = agent.id
+
+        return nresp
 
     def DMRequestReceiever(self, req, nid):
-        # TODO add a time check so we don't try to send again if we already sent recently,
-        # as the comms client may be trying to take care of the resend
+        # Update our comms status with this agent
+        if nid == 'Base':
+            self.base.updateTime()
+        elif 'B' in nid:
+            self.beacons[nid].lastDirectMessage = rospy.get_rostime()
+        else:
+            self.neighbors[nid].lastDirectMessage = rospy.get_rostime()
+
         resp = []
         for agent in req.agents:
             nresp = DMResp()
@@ -678,9 +731,9 @@ class BOBCAT(object):
             if agent.id != self.id and agent.id not in self.neighbors:
                 self.addNeighbor(agent.id, 'robot')
 
-            self.addMapDiffs(nid, nresp, agent)
-            self.addImages(nid, nresp, agent)
-            self.addPoseGraph(nid, nresp, agent)
+            nresp = self.addMapDiffs(nid, nresp, agent)
+            nresp = self.addImages(nid, nresp, agent)
+            nresp = self.addPoseGraph(nid, nresp, agent)
             if not self.dmSplit:
                 resp.append(nresp)
 
@@ -688,6 +741,14 @@ class BOBCAT(object):
             self.dmResp_pub[nid].publish(resp)
 
     def DMResponseReceiever(self, resp, nid):
+        # Update our comms status with this agent
+        if nid == 'Base':
+            self.base.updateTime()
+        elif 'B' in nid:
+            self.beacons[nid].lastDirectMessage = rospy.get_rostime()
+        else:
+            self.neighbors[nid].lastDirectMessage = rospy.get_rostime()
+
         receivedDM = False
         for agent in resp.agents:
             neighbor = self.neighbors[agent.id]

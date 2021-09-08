@@ -39,6 +39,10 @@ class DeployBeacon(DefaultBehavior):
         if self.a.guiBehavior == 'deployBeacon':
             self.score += self.a.objectives['input'].weight
 
+        # Force continuation of behavior if a deployment has already started
+        if self.a.lastBeacon:
+            self.score = 2000
+
     def execute(self):
         self.a.dropBeacon()
 
@@ -47,11 +51,13 @@ class Explore(DefaultBehavior):
 
     def __init__(self, agent):
         DefaultBehavior.__init__(self, agent)
-        self.monitors = ['HumanInput']  # Implict based on implementation
-        self.objectives = ['Explore']
+        self.monitors = ['ExploreToGoal', 'HumanInput']  # Implict based on implementation
+        self.objectives = ['Explore', 'Input']  # Implicit based on implementation
 
     def evaluate(self):
-        self.score = self.a.objectives['explore'].weight
+        self.score = 0
+        if not self.a.exploreToGoal:
+            self.score = self.a.objectives['explore'].weight
 
     def execute(self):
         self.a.explore()
@@ -61,11 +67,13 @@ class GoToGoal(DefaultBehavior):
 
     def __init__(self, agent):
         DefaultBehavior.__init__(self, agent)
-        self.monitors = ['HumanInput']
-        self.objectives = ['Input']
+        self.monitors = ['ExploreToGoal', 'HumanInput']
+        self.objectives = ['Explore', 'Input']
 
     def evaluate(self):
         self.score = 0
+        if self.a.exploreToGoal:
+            self.score = self.a.objectives['explore'].weight
         if self.a.guiBehavior == 'goToGoal':
             self.score = self.a.objectives['input'].weight
 
@@ -75,11 +83,13 @@ class GoToGoal(DefaultBehavior):
                     self.a.agent.guiGoalPoint.pose.position) < 2.0):
             rospy.loginfo(self.a.id + ' resuming exploration...')
             self.a.guiBehavior = None
+            self.a.exploreToGoal = False
             # May want to add other options for tasks when it reaches the goal
             self.a.behaviors['explore'].execute()
         else:
             if self.a.agent.status != 'guiCommand':
                 rospy.loginfo(self.a.id + ' setting GUI Goal Point...')
+                self.a.lastGoalTime = rospy.get_rostime()
             self.a.setGoalPoint('guiCommand')
 
 
@@ -102,10 +112,10 @@ class GoHome(DefaultBehavior):
 
     def execute(self):
         reason = 'Home'
-        if self.a.report:
+        if self.a.report and self.a.agent.status != 'Report':
             rospy.loginfo(self.a.id + ' return to report...')
             reason = 'Report'
-        if self.a.reverseDrop:
+        if self.a.reverseDrop and not self.a.checkStatus('Regain comms deploy'):
             rospy.loginfo(self.a.id + ' reverse deploy mode')
             self.a.updateStatus('Regain comms deploy')
         self.a.setGoalPoint(reason)
@@ -115,7 +125,7 @@ class Stop(DefaultBehavior):
 
     def __init__(self, agent):
         DefaultBehavior.__init__(self, agent)
-        self.monitors = ['HumanInput', 'NearbyRobot']
+        self.monitors = ['HumanInput']
         self.objectives = ['Input', 'BeSafe']
 
     def evaluate(self):

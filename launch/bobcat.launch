@@ -7,6 +7,8 @@
   <arg name="type" default="robot" />
   <!-- List of the beacons this robot is carrying -->
   <arg name="myBeacons" default="" />
+  <!-- Maximum number of beacons this robot can carry.  Used to fine-tune placement. -->
+  <arg name="maxBeacons" default="6" />
   <!-- Total number of beacons across all deployed agents.  Higher is ok. -->
   <arg name="totalBeacons" default="16" />
   <!-- Whether to enable smart beacons or not -->
@@ -39,7 +41,7 @@
   <!-- Set to true if planner only outputs one goal at a time.  False if expecting goal array -->
   <arg name="singleGoalDeconflict" default="false" />
   <!-- How long without a message to consider 'lost comms' -->
-  <arg name="commThreshold" default="2" />
+  <arg name="commThreshold" default="3" />
   <!-- How long to wait before trying subsequent direct message requests -->
   <arg name="dmWait" default="3" />
   <!-- Whether to split DMs into single messages, or send as one large message -->
@@ -55,7 +57,7 @@
   <!-- Minimum distance between nodes before dropping another beacon -->
   <arg name="junctionDist" default="10" />
   <!-- Minimum distance between beacons when dropping due to lost comms -->
-  <arg name="redeployDist" default="5" />
+  <arg name="redeployDist" default="4" />
   <!-- Whether to use turn detection to drop beacons -->
   <arg name="turnDetect" default="true" />
   <!-- Whether to delay beacon deployment so the trailing robot can drop instead -->
@@ -110,6 +112,7 @@
     <param name="type" value="$(arg type)" />
     <param name="myBeacons" value="$(arg myBeacons)" />
     <param name="totalBeacons" value="$(arg totalBeacons)" />
+    <param name="maxBeacons" value="$(arg maxBeacons)" />
     <param name="smartBeacons" value="$(arg smartBeacons)" />
     <param name="potentialNeighbors" value="$(arg potentialNeighbors)" />
     <param name="rate" value="$(arg rate)" />
@@ -126,6 +129,7 @@
     <param name="singleGoalDeconflict" value="$(arg singleGoalDeconflict)" />
     <param name="commThreshold" value="$(arg commThreshold)" />
     <param name="dmWait" value="$(arg dmWait)" />
+    <param name="dmSplit" value="$(arg dmSplit)" />
     <param name="stopCheck" value="$(arg stopCheck)" />
     <param name="mappingRange" value="$(arg mappingRange)" />
     <param name="anchorDropDist" value="$(arg anchorDropDist)" />

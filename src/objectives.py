@@ -49,7 +49,9 @@ class DefaultObjective():
 
 
 class Explore(DefaultObjective):
-    pass
+    def __init__(self, agent, priority):
+        DefaultObjective.__init__(self, agent, priority)
+        self.monitors = ['ExploreToGoal']
 
 
 class ReportArtifacts(DefaultObjective):
@@ -92,7 +94,7 @@ class ExtendComms(DefaultObjective):
 
     def __init__(self, agent, priority):
         DefaultObjective.__init__(self, agent, priority)
-        self.monitors = ['DeployBeacon', 'ReverseDrop']
+        self.monitors = ['Beacon', 'ReverseDrop']
 
     def evaluate(self):
         self.setWeight(0)

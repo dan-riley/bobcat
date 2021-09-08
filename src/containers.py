@@ -203,13 +203,27 @@ class Base(object):
         self.lastArtifact = ''
         self.incomm = True
         self.simcomm = True
+        self.regain = 0
+        self.regainTime = rospy.Time()
+        self.lastRegainTime = rospy.Time()
         self.baseArtifacts = []
         self.commBeacons = BeaconArray()
 
     def update(self, neighbor):
         self.lastMessage = neighbor.header.stamp
-        self.lastDirectMessage = rospy.get_rostime()
         self.commBeacons = neighbor.commBeacons
+        self.updateTime()
+
+    def updateTime(self):
+        # Throttle our counter in case we get a stream of messages
+        if rospy.get_rostime() > self.lastDirectMessage + rospy.Duration(0.5):
+            self.regain += 1
+        self.lastDirectMessage = rospy.get_rostime()
+
+    def resetRegain(self):
+        self.regain = 0
+        self.regainTime = self.lastDirectMessage
+        self.lastRegainTime = self.lastDirectMessage
 
     def updateArtifacts(self, agent_id, neighbor):
         self.baseStamp = neighbor.baseStamp.data

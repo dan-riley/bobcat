@@ -53,12 +53,13 @@ class BCMonitors():
         self.bl_beacons = []
         self.minAnchorDist = 10  # Minimum distance before a beacon is ever dropped
         self.beaconCommLost = 0
-        self.regainBase = 0
+        self.beaconCommLostPos = Point()
         self.dropReason = ''
         self.checkReverse = True
         self.neighborWait = 0
         self.stuck = 0
         self.stuckPose = Pose()
+        self.paused = False
         self.ignoreStopCommand = False
         self.lastStopCommand = rospy.get_rostime() + rospy.Duration(1)
         self.newArtifactTime = rospy.Time()
@@ -71,6 +72,7 @@ class BCMonitors():
         self.deployBeacon = False
         self.reverseDrop = False
         self.planner_status = True
+        self.exploreToGoal = False
         self.launch_status = True
         self.isAerial = False
         self.blacklistUpdated = False
@@ -179,6 +181,7 @@ class BCMonitors():
 
     def ReverseDropMonitor(self):
         if not self.numBeacons:
+            self.reverseDrop = False
             return
 
         # Reset the ability to check for reverse drop if we ever regain comms
@@ -186,57 +189,70 @@ class BCMonitors():
             self.checkReverse = True
             self.beaconCommLost = 0
 
+        threshold = self.commThreshold * 2 + rospy.Duration(1)
+        pose = self.agent.odometry.pose.pose
         # Check for reverse if we haven't disabled due to a blacklist, if not in comms,
         # and if we're not currently trying to reverse drop
         if self.checkReverse and not self.base.incomm and not self.reverseDrop:
+            if not self.beaconCommLost:
+                self.beaconCommLostPos = pose.position
             self.beaconCommLost += 1
             # If we're not talking to the base station, attempt to reverse drop
-            if self.beaconCommLost > 10:
+            # Wait longer the more beacons we drop to account for latency
+            if (self.beaconCommLost > threshold.secs + 2 * len(self.beaconsArray) and
+                    getDist(pose.position, self.beaconCommLostPos) > 3):
                 self.reverseDrop = True
                 # Check if we've already attempted a reverse drop in this area
                 # Sometimes there are deadzones and this can cause a loop if not accounted for
-                # Allow for one re-attempt in case we had a bad beacon drop earlier
-                pose = self.agent.odometry.pose.pose
-                bl_count = 0
                 for bl in self.bl_beacons:
-                    if getDist(pose.position, bl) < self.junctionDist:
-                        bl_count += 1
-                        if bl_count > 1:
-                            self.reverseDrop = False
-                            # Disable checking again unless we regain comms at some point
-                            self.checkReverse = False
-                            rospy.loginfo(self.id + ' skipping reverse drop due to previous try')
-                            break
+                    if getDist(pose.position, bl) < self.redeployDist:
+                        self.reverseDrop = False
+                        # Disable checking again unless we regain comms at some point
+                        self.checkReverse = False
+                        rospy.loginfo(self.id + ' skipping reverse drop due to previous try')
+                        break
 
-                # Add to the list of previously tried positions
+                # Add to the list of previously tried positions and save our return goal
                 if self.reverseDrop:
                     self.bl_beacons.append(pose.position)
+                    self.agent.guiGoalPoint = self.agent.exploreGoal
 
                 # Reset the counter so we don't attempt again right away
                 self.beaconCommLost = 0
 
+        # Figure out how many messages we need to consider us in good enough comms to drop
+        # Assume every beacon added reduces our effectiveness, even from other agents
+        regainNeeded = self.commThreshold.secs + 1 - len(self.beaconsArray)
+        if regainNeeded < 1:
+            regainNeeded = 1
         # If we've regained comms and were trying to reverse drop, check if we can
-        if self.reverseDrop and self.base.incomm:
-            pose = self.agent.odometry.pose.pose
+        if (self.reverseDrop and self.base.incomm and rospy.get_rostime() +
+                rospy.Duration(regainNeeded - self.base.regain + 1) <
+                self.base.regainTime + threshold):
             checkDist = self.redeployDist
-            if self.regainBase > 5:
-                # Make sure there's no more than 1 beacon already in the area
-                # Allow for one in case we have a failed drop or beacon isn't working
+
+            # If we've gotten a couple of new messages, stop and check comms
+            if self.base.regain > 1 and not self.paused:
+                rospy.loginfo(self.id + ' checking beacon comms')
+                self.base.resetRegain()
+                self.pause()
+                return
+
+            if self.base.regain > regainNeeded:
+                # Make sure there's no beacons already in the area
                 dropBeacon = True
                 dropBeacon, nB, nDB = self.beaconDistCheck(pose, checkDist, dropBeacon)
-                if dropBeacon or nB - nDB == 1:
+                if dropBeacon:
                     self.dropReason = 'Regain comms'
                     self.deployBeacon = True
                 else:
                     # The bl_beacons should prevent this from occuring too many times
                     rospy.loginfo(self.id + ' beacon too close, cancelling drop')
-                self.regainBase = 0
                 self.reverseDrop = False
+                self.exploreToGoal = True
+                self.move(True)
             else:
-                anchorDist = getDist(pose.position, self.anchorPos)
-                if anchorDist > 10:
-                    self.regainBase += 1
-                else:
+                if getDist(pose.position, self.anchorPos) < 10:
                     # If we're close to anchor, comms must just be too bad to keep trying to drop
                     # Drop one anyway if there's not already one nearby just in case it helps
                     dropBeacon = True
@@ -246,17 +262,18 @@ class BCMonitors():
                         self.deployBeacon = True
                     else:
                         rospy.loginfo(self.id + ' anchor too close, cancelling drop')
-                    self.regainBase = 0
                     self.reverseDrop = False
-        else:
-            self.regainBase = 0
+                    self.exploreToGoal = True
+                    self.move(True)
+        elif self.reverseDrop:
+            self.base.resetRegain()
+            self.move(True)
 
     def BeaconMonitor(self):
-        # Make sure we stay in deploy behavior until confirmation the beacon was deployed
-        if self.deployBeacon and not self.beaconDeployed:
+        # Don't check if we're already deploying for some reason
+        if self.deployBeacon or self.reverseDrop or self.lastBeacon:
             return
 
-        self.deployBeacon = False
         # Check if we need to drop a beacon if we have any beacons to drop
         if self.numBeacons > 0:
             pose = self.agent.odometry.pose.pose
@@ -264,7 +281,7 @@ class BCMonitors():
             dropReason = ''
 
             # We're connected to the mesh, either through anchor or beacon(s)
-            if self.base.incomm:
+            if self.base.incomm and self.base.regain > 10:
                 # Once we pass the maxDist we could set a flag so we don't keep recalculating this
                 anchorDist = getDist(pose.position, self.anchorPos)
                 # Beacon distance based drop only kicks in once out of anchor range
@@ -449,6 +466,7 @@ class BCMonitors():
                     self.dropReason = 'GUI Command'
                     self.deployBeacon = True
 
+                self.exploreToGoal = False
                 rospy.loginfo(self.id + ' received new GUI Task ' + self.agent.guiTaskValue)
             elif self.agent.guiTaskName == 'setGUITime':
                 self.guiStopTime = rospy.Time(int(self.agent.guiTaskValue) / 1000000000)
@@ -457,6 +475,7 @@ class BCMonitors():
             elif self.agent.guiTaskName == 'setBeacons':
                 self.myBeacons = self.agent.guiTaskValue.split(',')
                 self.numBeacons = len(self.myBeacons) if self.myBeacons[0] != '' else 0
+                self.startBeacons = self.numBeacons
                 for beacon in self.myBeacons:
                     self.beacons[beacon].owner = True
                 rospy.loginfo(self.id + ' loaded beacons ' + str(self.myBeacons))
