@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <!-- Vehicle name for namespace and topic id -->
+  <arg name="vehicle" default="H01" />
+  <arg name="ns" default="/$(arg vehicle)" />
+
+  <node ns="$(arg ns)" pkg="bobcat" type="viewer.py" name="bobcat_viewer" output="screen">
+    <param name="vehicle" value="$(arg vehicle)" />
+  </node>
+</launch>
