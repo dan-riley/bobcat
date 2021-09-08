@@ -254,6 +254,8 @@ class BOBCAT(object):
                 rospy.Publisher(topic + 'incomm', Bool, queue_size=10)
             self.viz[nid]['battery'] = \
                 rospy.Publisher(topic + 'battery', Float32, queue_size=10)
+            self.viz[nid]['pose'] = \
+                rospy.Publisher('/poses/' + nid, PoseStamped, queue_size=10)
             self.viz[nid]['odometry'] = \
                 rospy.Publisher(topic + 'odometry', Odometry, queue_size=10)
             self.viz[nid]['goal'] = \
@@ -311,6 +313,10 @@ class BOBCAT(object):
             # Don't publish if the robot hasn't initialized odometry
             if (neighbor.odometry.pose.pose.position.x != 0 and
                 neighbor.odometry.pose.pose.position.y != 0):
+                pose = PoseStamped()
+                pose.header = neighbor.odometry.header
+                pose.pose = neighbor.odometry.pose.pose
+                self.viz[neighbor.id]['pose'].publish(pose)
                 self.viz[neighbor.id]['odometry'].publish(neighbor.odometry)
                 self.viz[neighbor.id]['goal'].publish(neighbor.goal.pose)
                 self.viz[neighbor.id]['path'].publish(neighbor.goal.path)
