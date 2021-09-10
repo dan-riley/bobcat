@@ -170,6 +170,7 @@ class Agent(object):
         if not self.reportImages:
             for artifact in self.checkArtifacts.artifacts:
                 artifact.image_data.data = []
+                artifact.image_data.format = 'empty'
         artifactString = repr(self.checkArtifacts.artifacts).encode('utf-8')
         self.lastArtifact = hashlib.md5(artifactString).hexdigest()
 

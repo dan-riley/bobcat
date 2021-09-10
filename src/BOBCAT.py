@@ -113,6 +113,7 @@ class BOBCAT(object):
         self.updatePoseGraphArray = False
         self.pathTransform = TransformStamped()
         self.lastDMReq = rospy.Time()
+        self.dmQueueTime = rospy.Time()
         self.dmReqs = []
 
         rospy.init_node(self.id + '_bobcat')
@@ -292,7 +293,7 @@ class BOBCAT(object):
 
         # Pairs for direct message requests
         self.dmReq_pub[nid] = rospy.Publisher(pubDMReqTopic, DMReqArray, queue_size=1)
-        self.dmReq_sub[nid] = rospy.Subscriber(subDMReqTopic, DMReqArray, self.DMRequestReceiever, nid)
+        self.dmReq_sub[nid] = rospy.Subscriber(subDMReqTopic, DMReqArray, self.DMRequestReceiever, nid, queue_size=1)
 
         # Pairs for direct message responses
         self.dmResp_pub[nid] = rospy.Publisher(pubDMRespTopic, DMRespArray, queue_size=1)
@@ -668,7 +669,7 @@ class BOBCAT(object):
                         nresp.id = agent.id
                         nresp.mapDiffs.owner = agent.id
                         nresp.mapDiffs.num_octomaps = 0
-                        rospy.sleep(0.5)
+                        rospy.sleep(0.2)
                     break
 
         return nresp
@@ -688,7 +689,7 @@ class BOBCAT(object):
                         self.dmResp_pub[nid].publish([nresp])
                         nresp = DMResp()
                         nresp.id = agent.id
-                        rospy.sleep(0.5)
+                        rospy.sleep(0.2)
                     break
 
         return nresp
@@ -806,8 +807,11 @@ class BOBCAT(object):
 
         # Clear out the request log so we don't skip any
         if receivedDM:
-            self.lastDMReq = rospy.get_rostime() - self.dmWait
-            self.dmReqs = []
+            # If we start receiving messages from a queue, then keep waiting before more requests
+            if rospy.get_rostime() < self.dmQueueTime:
+                self.lastDMReq = rospy.get_rostime()
+            else:
+                self.lastDMReq = rospy.get_rostime() - self.dmWait
 
     def requestMissing(self):
         # If we've made a request recently, give it some time to try someone else
@@ -815,6 +819,7 @@ class BOBCAT(object):
             return
 
         # Build a full request list of all missing diffs
+        dmMult = 0
         requestFrom = False
         reqs = DMReqArray()
         for neighbor in self.neighbors.values():
@@ -826,11 +831,13 @@ class BOBCAT(object):
             # Look for missing maps and add to request
             if neighbor.missingDiffs:
                 req.missingDiffs = neighbor.missingDiffs
+                dmMult += len(neighbor.missingDiffs)
                 addRequest = True
 
             # Look for missing images and add to request
             if neighbor.missingImages:
                 req.missingImages = neighbor.missingImages
+                dmMult += len(neighbor.missingImages)
                 addRequest = True
 
             if neighbor.latestPoseGraph > neighbor.latestPoseGraphAvailable:
@@ -840,7 +847,7 @@ class BOBCAT(object):
             if addRequest:
                 reqs.agents.append(req)
                 # Request directly from the first one we have missing maps from
-                if not requestFrom and neighbor.incomm:
+                if not requestFrom and neighbor.incomm and neighbor.id not in self.dmReqs:
                     requestFrom = neighbor.id
 
         # If we have any, find someone to request from
@@ -865,7 +872,10 @@ class BOBCAT(object):
 
             # Publish the request to this agent
             if requestFrom:
+                # Limit our queue time to 10 seconds
+                dmMult = 100 if dmMult > 100 else dmMult
                 self.lastDMReq = rospy.get_rostime()
+                self.dmQueueTime = self.lastDMReq + rospy.Duration(dmMult * 0.1)
                 self.dmReqs.append(requestFrom)
                 self.dmReq_pub[requestFrom].publish(reqs)
             else:
