@@ -109,13 +109,36 @@ def pointToPathDistance(pt, r0, r1):
     r = pt - r0
     rid = np.dot(r, r01u)
     if rid > d:
-        return r1
+        return np.linalg.norm(r1 - pt)
     elif rid < 0:
-        return r0
-    ri = r01u * ridP
+        return np.linalg.norm(r0 - pt)
+    ri = r01u * rid
     lpt = r0 + ri
 
-    return np.linalg.norm(npos - nearPoint)
+    return np.linalg.norm(lpt - pt)
+
+
+def comparePointToPath(point, path, limit):
+    i = 0
+    prevDist = 0
+    descending = False
+    pt = positionToNP(point)
+    while i < len(path.poses) - 1:
+        p0 = positionToNP(path.poses[i].pose.position)
+        p1 = positionToNP(path.poses[i+1].pose.position)
+
+        ptDistance = pointToPathDistance(pt, p0, p1)
+        if ptDistance < prevDist:
+            descending = True
+
+        if descending and ptDistance < limit:
+            # Path points toward the point and is inside the limit
+            return True
+
+        prevDist = ptDistance
+        i += 1
+
+    return False
 
 
 def lineDistance(a0, a1, b0, b1):
@@ -202,7 +225,7 @@ def comparePaths(path1, path2, limit):
             p10 = positionToNP(path1.poses[j].pose.position)
             p11 = positionToNP(path1.poses[j+1].pose.position)
             ptDistance = lineDistance(p10, p11, p20, p21)
-            if i == 0 and  ptDistance < prevDist:
+            if i == 0 and ptDistance < prevDist:
                 descending = True
 
             if descending and ptDistance < limit:

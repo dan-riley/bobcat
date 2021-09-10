@@ -11,7 +11,7 @@ from marble_origin_detection_msgs.msg import OriginDetectionStatus
 from estop_msgs.msg import BaseStatus
 from sensor_msgs.msg import BatteryState
 
-from util.helpers import getDist, getYaw, averagePose, averagePosition, angleDiff, comparePaths, truncatePath
+from util.helpers import getDist, getYaw, averagePose, averagePosition, angleDiff, comparePointToPath, comparePaths, truncatePath
 
 
 class BCMonitors():
@@ -62,6 +62,7 @@ class BCMonitors():
         self.paused = False
         self.ignoreStopCommand = False
         self.lastStopCommand = rospy.get_rostime() + rospy.Duration(1)
+        self.checkCarefulTime = rospy.get_rostime() + rospy.Duration(5)
         self.newArtifactTime = rospy.Time()
         self.numNewArtifacts = 0
         self.guiStopTime = rospy.get_rostime() + rospy.Duration(3600) # One hour, until set by GUI
@@ -442,6 +443,45 @@ class BCMonitors():
         # Reset our waiting timer when there's no conflict
         if not self.nearbyRobot:
             self.neighborWait = 0
+
+    def CarefulMonitor(self):
+        # If a beacons or robot are within localization error distance tell planner to be careful
+        careful = False
+        curpos = self.agent.odometry.pose.pose.position
+        # Don't do the checks until we've made some progress
+        if rospy.get_rostime() < self.checkCarefulTime or getDist(curpos, self.anchorPos) < 20:
+            return
+
+        self.checkCarefulTime = rospy.get_rostime() + rospy.Duration(5)
+
+        for neighbor in self.neighbors.values():
+            # Ignore the neighbor if we don't have current data, which should've come direct
+            if rospy.get_rostime() > neighbor.lastDirectMessage + rospy.Duration(5):
+                continue
+
+            # First check to see if the neighbor is in the vicinity before bothering with path
+            npos = neighbor.odometry.pose.pose.position
+            if getDist(curpos, npos) < self.deconflictRadius * 3:
+                careful = True
+                break
+
+        path = truncatePath(self.agent.goal.path, curpos)
+        for beacon in self.beacons.values():
+            if beacon.active and getDist(beacon.pos, curpos) < self.deconflictRadius * 3:
+                if beacon.owner:
+                    # If it's our beacon, we can trust the position and use path checking
+                    if comparePointToPath(beacon.pos, path, self.deconflictRadius):
+                        careful = True
+                        break
+                else:
+                    # Otherwise, we can't trust the localization so stick to the radius check
+                    careful = True
+                    break
+
+        if careful:
+            # Tell the planner to look for dynamic obstacles in this area
+            rospy.loginfo(self.id + ' robot or beacon nearby, plan carefully')
+            self.task_pub.publish('careful')
 
     def GUIMonitor(self):
         # Manage the newest task sent
