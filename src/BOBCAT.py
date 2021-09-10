@@ -2,6 +2,7 @@
 from __future__ import print_function
 import rospy
 import copy
+import threading
 import tf2_ros
 import tf2_geometry_msgs
 
@@ -93,6 +94,7 @@ class BOBCAT(object):
         if not self.sendImages:
             self.reportImages = False
 
+        self.lock = threading.Lock()
         self.neighbors = {}
         self.beacons = {}
         self.beaconsArray = []
@@ -495,6 +497,7 @@ class BOBCAT(object):
         if not self.commListen:
             return
 
+        self.lock.acquire()
         # If I'm a beacon, don't do anything with the data unless activated!
         if self.type == 'beacon':
             if not self.beaconCommCheck(data):
@@ -555,6 +558,7 @@ class BOBCAT(object):
                 elif neighbor2.guiStamp.data > self.agent.guiStamp:
                     # Accept the GUI commands coming from a neighbor if its new and not empty
                     self.agent.guiUpdate(neighbor2)
+        self.lock.release()
     ##### Stop Message Deconfliction #####
 
     ##### Start Direct Message Handling #####
@@ -756,6 +760,8 @@ class BOBCAT(object):
         else:
             self.neighbors[nid].lastDirectMessage = rospy.get_rostime()
 
+        # Can receive data from multiple agents at once so need to lock it down
+        self.lock.acquire()
         receivedDM = False
         for agent in resp.agents:
             neighbor = self.neighbors[agent.id]
@@ -812,6 +818,7 @@ class BOBCAT(object):
                 self.lastDMReq = rospy.get_rostime()
             else:
                 self.lastDMReq = rospy.get_rostime() - self.dmWait
+        self.lock.release()
 
     def requestMissing(self):
         # If we've made a request recently, give it some time to try someone else
@@ -1011,6 +1018,7 @@ class BOBCAT(object):
                 rate.sleep()
                 continue
 
+            self.lock.acquire()
             # Check if we need to hard reset map and multiagent
             hardReset = self.hardResetCheck()
 
@@ -1071,5 +1079,6 @@ class BOBCAT(object):
             if self.useViz:
                 self.publishViz()
 
+            self.lock.release()
             rate.sleep()
         return
