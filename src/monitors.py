@@ -63,6 +63,7 @@ class BCMonitors():
         self.ignoreStopCommand = False
         self.lastStopCommand = rospy.get_rostime() + rospy.Duration(1)
         self.checkCarefulTime = rospy.get_rostime() + rospy.Duration(5)
+        self.blacklistResetTime = rospy.Time()
         self.newArtifactTime = rospy.Time()
         self.numNewArtifacts = 0
         self.guiStopTime = rospy.get_rostime() + rospy.Duration(3600) # One hour, until set by GUI
@@ -363,6 +364,11 @@ class BCMonitors():
     def StuckMonitor(self):
         self.blacklistUpdated = False
         if self.agent.goal.path.poses and len(self.history) == self.hislen:
+            # Clear the blacklist every two minutes
+            if self.blacklist.points and rospy.get_rostime() > self.blacklistResetTime:
+                self.blacklist.points = []
+                rospy.loginfo('reset blacklist')
+
             # Check if we've been stopped if we have a goal
             if (getDist(self.stuckPose.position, self.history[-1].position) < 0.5 and
                     abs(angleDiff(math.degrees(getYaw(self.stuckPose.orientation)),

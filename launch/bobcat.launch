@@ -31,7 +31,7 @@
   <!-- Set to false if comms may be an issue.  CAUTION: This must be the same on all agents! -->
   <arg name="reportImages" default="true" />
   <!-- How many artifacts until we go back to comms to report -->
-  <arg name="maxNewArtifacts" default="3" />
+  <arg name="maxNewArtifacts" default="5" />
   <!-- How long to wait until reporting if we don't have enough new artifacts -->
   <arg name="maxReportTime" default="300" />
   <!-- Distance within which to fuse artifacts -->

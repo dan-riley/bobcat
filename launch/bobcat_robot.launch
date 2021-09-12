@@ -7,7 +7,7 @@
   <arg name="myBeacons" default="" />
   <arg name="turnDetect" default="true" />
   <arg name="delayDrop" default="false" />
-  <arg name="redeployDist" default="0" />
+  <arg name="redeployDist" default="4" />
   <arg name="reverseDrop" default="true" />
   <arg name="mappingRange" default="1000" />
   <arg name="useExtTraj" default="false" />

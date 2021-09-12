@@ -118,6 +118,9 @@ class BCActions():
 
     def addBlacklist(self, goal):
         if self.checkBlacklist(goal):
+            # If this is our first new blacklist, set the reset timer
+            if not self.blacklist.points:
+                self.blacklistResetTime = rospy.get_rostime() + rospy.Duration(20)
             goalstr = str(goal.x) + '-' + str(goal.y) + '-' + str(goal.z)
             rospy.loginfo(self.id + ' added ' + goalstr + ' to blacklist')
             self.blacklist.points.append(goal)

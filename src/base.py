@@ -54,6 +54,9 @@ class BCBase(BOBCAT):
         self.viz['artifacts'] = rospy.Publisher('martifacts', MarkerArray, queue_size=10)
         self.martifact = MarkerArray()
 
+        self.viz['names'] = rospy.Publisher('mnames', MarkerArray, queue_size=10)
+        self.mnames = MarkerArray()
+
         self.commListen = True
 
     ##### Start Base Station Output Aggregation #####
@@ -94,6 +97,31 @@ class BCBase(BOBCAT):
             self.martifact.markers.append(martifact)
             i = i + 1
 
+    def buildNameMarkers(self):
+        i = 0
+        self.mnames.markers = []
+        for neighbor in self.neighbors.values():
+
+            mname = Marker()
+            mname.header.frame_id = 'world'
+            mname.id = i
+            mname.type = mname.TEXT_VIEW_FACING
+            mname.action = mname.ADD
+            mname.scale.x = 1.0
+            mname.scale.y = 1.0
+            mname.scale.z = 1.0
+            mname.color.a = 1.0
+            mname.color.r = 1.0
+            mname.color.g = 1.0
+            mname.color.b = 1.0
+            mname.pose.position.x = neighbor.odometry.pose.pose.position.x
+            mname.pose.position.y = neighbor.odometry.pose.pose.position.y - 1.5
+            mname.pose.position.z = neighbor.odometry.pose.pose.position.z + 2.0
+            mname.text = neighbor.id
+
+            self.mnames.markers.append(mname)
+            i = i + 1
+
     def publishNeighbors(self):
         self.mbeacon.points = []
         for beacon in self.beacons.values():
@@ -103,6 +131,9 @@ class BCBase(BOBCAT):
 
         self.buildArtifactMarkers()
         self.viz['artifacts'].publish(self.martifact)
+
+        self.buildNameMarkers()
+        self.viz['names'].publish(self.mnames)
     ##### End Base Station Output Aggregation #####
 
     def GetArtifactScore(self, data):
