@@ -152,7 +152,8 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         if self.startedMission:
             self.BeaconMonitor()
             self.NeighborMonitor()
-            self.CarefulMonitor()
+            # Enable to help planner avoid robots and beacon with dynamic replanning
+            # self.CarefulMonitor()
             if self.reverseDropEnable:
                 self.ReverseDropMonitor()
             if self.agent.status != 'Stop':

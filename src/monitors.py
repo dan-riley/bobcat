@@ -97,6 +97,7 @@ class BCMonitors():
             self.battery_sub = rospy.Subscriber('battery_state', BatteryState, self.BatterySimMonitor)
         else:
             self.battery_sub = rospy.Subscriber('base_state', BaseStatus, self.BatteryMonitor)
+            self.battery_spot_sub = rospy.Subscriber('fp_state', BaseStatus, self.BatteryMonitor)
 
     def WaitMonitor(self, data):
         if data.status > 0:
