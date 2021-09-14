@@ -461,33 +461,16 @@ class BCMonitors():
 
         self.checkCarefulTime = rospy.get_rostime() + rospy.Duration(5)
 
-        for neighbor in self.neighbors.values():
-            # Ignore the neighbor if we don't have current data, which should've come direct
-            if rospy.get_rostime() > neighbor.lastDirectMessage + rospy.Duration(5):
-                continue
-
-            # First check to see if the neighbor is in the vicinity before bothering with path
-            npos = neighbor.odometry.pose.pose.position
-            if getDist(curpos, npos) < self.deconflictRadius * 3:
-                careful = True
-                break
-
         path = truncatePath(self.agent.goal.path, curpos)
         for beacon in self.beacons.values():
-            if beacon.active and getDist(beacon.pos, curpos) < self.deconflictRadius * 3:
-                if beacon.owner:
-                    # If it's our beacon, we can trust the position and use path checking
-                    if comparePointToPath(beacon.pos, path, self.deconflictRadius):
-                        careful = True
-                        break
-                else:
-                    # Otherwise, we can't trust the localization so stick to the radius check
+            if beacon.active and getDist(beacon.pos, curpos) < 3:
+                if comparePointToPath(beacon.pos, path, 1.5):
                     careful = True
                     break
 
         if careful:
             # Tell the planner to look for dynamic obstacles in this area
-            rospy.loginfo(self.id + ' robot or beacon nearby, plan carefully')
+            rospy.loginfo(self.id + ' beacon nearby, plan carefully')
             self.task_pub.publish('careful')
 
     def GUIMonitor(self):
