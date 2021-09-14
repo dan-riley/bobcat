@@ -112,9 +112,10 @@ class GoHome(DefaultBehavior):
 
     def execute(self):
         reason = 'Home'
-        if self.a.report and self.a.agent.status != 'Report':
-            rospy.loginfo(self.a.id + ' return to report...')
+        if self.a.report:
             reason = 'Report'
+            if self.a.agent.status != 'Report':
+                rospy.loginfo(self.a.id + ' return to report...')
         if self.a.reverseDrop and not self.a.checkStatus('Regain comms deploy'):
             rospy.loginfo(self.a.id + ' reverse deploy mode')
             self.a.updateStatus('Regain comms deploy')

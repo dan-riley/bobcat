@@ -455,12 +455,6 @@ class BCMonitors():
         # If a beacons or robot are within localization error distance tell planner to be careful
         careful = False
         curpos = self.agent.odometry.pose.pose.position
-        # Don't do the checks until we've made some progress
-        if rospy.get_rostime() < self.checkCarefulTime or getDist(curpos, self.anchorPos) < 20:
-            return
-
-        self.checkCarefulTime = rospy.get_rostime() + rospy.Duration(5)
-
         path = truncatePath(self.agent.goal.path, curpos)
         for beacon in self.beacons.values():
             if beacon.active and getDist(beacon.pos, curpos) < 3:
@@ -468,10 +462,11 @@ class BCMonitors():
                     careful = True
                     break
 
-        if careful:
+        if careful and rospy.get_rostime() > self.checkCarefulTime:
             # Tell the planner to look for dynamic obstacles in this area
             rospy.loginfo(self.id + ' beacon nearby, plan carefully')
             self.task_pub.publish('careful')
+            self.checkCarefulTime = rospy.get_rostime() + rospy.Duration(5)
 
     def GUIMonitor(self):
         # Manage the newest task sent
