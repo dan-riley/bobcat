@@ -35,7 +35,7 @@ class BCRobot(BOBCAT, BCMonitors, BCActions):
         # Need to make this, and the arguments to the objectives, launch file parameters
         self.numPriorities = 3
         self.objectives = {}
-        self.objectives['explore'] = objectives.Explore(self, 2)
+        self.objectives['findArtifacts'] = objectives.FindArtifacts(self, 2)
         self.objectives['report'] = objectives.ReportArtifacts(self, 1)
         self.objectives['input'] = objectives.Input(self, 0)
         self.objectives['maintainComms'] = objectives.MaintainComms(self, 3)

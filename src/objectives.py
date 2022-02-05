@@ -48,10 +48,12 @@ class DefaultObjective():
         self.setWeight()
 
 
-class Explore(DefaultObjective):
+class FindArtifacts(DefaultObjective):
+
     def __init__(self, agent, priority):
         DefaultObjective.__init__(self, agent, priority)
         self.monitors = ['ExploreToGoal']
+        # The ExploreToGoal Monitor is associated, but the objective is always active
 
 
 class ReportArtifacts(DefaultObjective):

@@ -52,12 +52,12 @@ class Explore(DefaultBehavior):
     def __init__(self, agent):
         DefaultBehavior.__init__(self, agent)
         self.monitors = ['ExploreToGoal', 'HumanInput']  # Implict based on implementation
-        self.objectives = ['Explore', 'Input']  # Implicit based on implementation
+        self.objectives = ['FindArtifacts', 'Input']  # Implicit based on implementation
 
     def evaluate(self):
         self.score = 0
         if not self.a.exploreToGoal:
-            self.score = self.a.objectives['explore'].weight
+            self.score = self.a.objectives['findArtifacts'].weight
 
     def execute(self):
         self.a.explore()
@@ -68,12 +68,12 @@ class GoToGoal(DefaultBehavior):
     def __init__(self, agent):
         DefaultBehavior.__init__(self, agent)
         self.monitors = ['ExploreToGoal', 'HumanInput']
-        self.objectives = ['Explore', 'Input']
+        self.objectives = ['FindArtifacts', 'Input']
 
     def evaluate(self):
         self.score = 0
         if self.a.exploreToGoal:
-            self.score = self.a.objectives['explore'].weight
+            self.score = self.a.objectives['findArtifacts'].weight
         if self.a.guiBehavior == 'goToGoal':
             self.score = self.a.objectives['input'].weight
 
